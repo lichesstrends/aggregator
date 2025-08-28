@@ -2,10 +2,10 @@ use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug, Eq)]
 pub struct Key {
-    pub month: String,      // "YYYY-MM"
-    pub opening: String,    // Opening or ECO (fallback)
-    pub w_bucket: u16,      // lower bound of 100-pt bucket, e.g. 2200
-    pub b_bucket: u16,      // lower bound of 100-pt bucket, e.g. 2300
+    pub month: String,   // "YYYY-MM" or "unknown"
+    pub opening: String, // Opening or ECO (fallback)
+    pub w_bucket: u16,   // 100-pt bucket lower bound, e.g. 2200
+    pub b_bucket: u16,   // 100-pt bucket lower bound, e.g. 2200
 }
 
 impl PartialEq for Key {
@@ -41,9 +41,7 @@ impl Counter {
             "1-0" => self.white_wins += 1,
             "0-1" => self.black_wins += 1,
             "1/2-1/2" => self.draws += 1,
-            _ => {
-                // Unknown or "*": count as game but not in any result bucket
-            }
+            _ => {}
         }
     }
 

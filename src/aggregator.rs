@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 use crate::model::{Counter, Key};
 use crate::pgn::{
@@ -17,7 +20,7 @@ impl Aggregator {
         }
     }
 
-    /// Process one game's lines: pull needed tags, compute key, update counters.
+    /// Process one game's lines: compute key, update counters.
     pub fn process_game(&mut self, game_lines: &[String]) {
         if game_lines.is_empty() {
             return;
@@ -42,46 +45,41 @@ impl Aggregator {
         counter.add_result(&result);
     }
 
-    /// Emit CSV with normalized percentages (keeps raw games).
-    pub fn print_csv(&self) {
-        println!("month,opening,white_bucket,black_bucket,games,white_pct,black_pct,draw_pct");
+    /// Write CSV with percentages and raw games.
+    pub fn write_csv(&self, out_path: &Path) -> io::Result<()> {
         let mut entries: Vec<_> = self.map.iter().collect();
-        // sort by games desc for nicer viewing
         entries.sort_by_key(|(_, c)| std::cmp::Reverse(c.games));
+
+        let mut f = File::create(out_path)?;
+        writeln!(
+            f,
+            "month,opening,white_bucket,black_bucket,games,white_pct,black_pct,draw_pct"
+        )?;
 
         for (k, c) in entries {
             let (w, b, d) = c.percentages();
-            println!(
+            writeln!(
+                f,
                 "{},{},{},{},{},{:.3},{:.3},{:.3}",
-                k.month, escape_csv(&k.opening), k.w_bucket, k.b_bucket, c.games, w, b, d
-            );
+                k.month,
+                escape_csv(&k.opening),
+                k.w_bucket,
+                k.b_bucket,
+                c.games,
+                w,
+                b,
+                d
+            )?;
         }
+        Ok(())
     }
 
-    /// Convenience function for the specific query: black 2200–2299 win % on Sicilian.
-    /// We treat "Sicilian" as any opening string containing "sicilian" (case-insensitive).
-    pub fn print_black_2200_sicilian_win_pct(&self) {
-        let mut total = Counter::default();
-
-        for (k, c) in &self.map {
-            if k.b_bucket == 2200 && k.opening.to_lowercase().contains("sicilian") {
-                total.games += c.games;
-                total.white_wins += c.white_wins;
-                total.black_wins += c.black_wins;
-                total.draws += c.draws;
-            }
-        }
-
-        let (_, black_pct, _) = total.percentages();
-        println!(
-            "Black 2200–2299 win % on Sicilian (all months, all white buckets): {:.3}% (n={})",
-            black_pct, total.games
-        );
+    pub fn total_games(&self) -> u64 {
+        self.map.values().map(|c| c.games).sum()
     }
 }
 
 fn escape_csv(s: &str) -> String {
-    // Quote if needed
     if s.contains(',') || s.contains('"') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
@@ -89,12 +87,10 @@ fn escape_csv(s: &str) -> String {
     }
 }
 
-/// Stream stdin PGN into games and feed the aggregator.
-pub fn run_stream_stdin() -> std::io::Result<()> {
-    use std::io::{self, BufRead};
-
-    let stdin = io::stdin();
-    let reader = io::BufReader::new(stdin.lock());
+/// Stream stdin PGN into games, aggregate, optionally write CSV, return games count.
+pub fn run_stream_stdin(out_path: Option<&Path>) -> io::Result<usize> {
+    let stdin = std::io::stdin();
+    let reader = std::io::BufReader::new(stdin.lock());
 
     let mut agg = Aggregator::new();
     let mut current_game: Vec<String> = Vec::with_capacity(512);
@@ -111,9 +107,9 @@ pub fn run_stream_stdin() -> std::io::Result<()> {
         agg.process_game(&current_game);
     }
 
-    // Output
-    agg.print_csv();
-    agg.print_black_2200_sicilian_win_pct();
+    if let Some(p) = out_path {
+        agg.write_csv(p)?;
+    }
 
-    Ok(())
+    Ok(agg.total_games() as usize)
 }
