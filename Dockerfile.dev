@@ -1,0 +1,14 @@
+FROM rust:1.89-slim
+
+# zstd provides zstdcat for streaming .zst files
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends zstd ca-certificates bash \
+ && rm -rf /var/lib/apt/lists/*
+
+# Ensure cargo and cargo-installed binaries are always on PATH
+ENV PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:${PATH}"
+
+# auto-rebuild/run on changes
+RUN cargo install cargo-watch
+
+WORKDIR /app
