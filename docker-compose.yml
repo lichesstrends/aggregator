@@ -4,8 +4,15 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     working_dir: /app
+    environment:
+      # DB env (good defaults; override in .env or compose overrides if you want)
+      DATABASE_URL: "sqlite:///data/lichess.db"
+      DB_MAX_CONNECTIONS: "10"
+      SQLITE_JOURNAL_MODE: "WAL"    # or MEMORY (WAL is great for speed + durability)
+      SQLITE_SYNCHRONOUS: "NORMAL"  # OFF is faster, NORMAL is a good balance
     volumes:
       - .:/app
+      - ./data:/data
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - target-cache:/app/target
@@ -13,9 +20,20 @@ services:
     command: >
       bash -c "
         echo '🔁 cargo-watch running (debug build)...';
-        cargo-watch -x 'run'
+        cargo-watch -x 'run -- --help >/dev/null || true' -x 'run'
       "
-      
+
+  # Simple web GUI for SQLite, open http://localhost:8080
+  dbui:
+    image: coleifer/sqlite-web:latest
+    command: ["sqlite_web", "-H", "0.0.0.0", "-p", "8080", "/data/lichess.db"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - dev
+
 volumes:
   cargo-registry:
   cargo-git:

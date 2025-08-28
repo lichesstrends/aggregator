@@ -1,14 +1,13 @@
 FROM rust:1.89-slim
 
-# zstd provides zstdcat for streaming .zst files
+# zstd for zstdcat; sqlite dev libs to build sqlx driver fast; bash for scripts
 RUN apt-get update \
- && apt-get install -y --no-install-recommends zstd ca-certificates bash \
+ && apt-get install -y --no-install-recommends zstd ca-certificates bash libsqlite3-dev pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
-# Ensure cargo and cargo-installed binaries are always on PATH
 ENV PATH="/usr/local/cargo/bin:/usr/local/rustup/bin:${PATH}"
 
-# auto-rebuild/run on changes
+# hot reload
 RUN cargo install cargo-watch
 
 WORKDIR /app

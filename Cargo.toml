@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
+sqlx  = { version = "0.7", features = ["runtime-tokio", "sqlite", "macros"] }
+dotenvy = "0.15"
+anyhow = "1"
