@@ -12,7 +12,7 @@ The **Lichess Trends Aggregator** is a fast, streaming **Rust** tool that turns 
 - stores **counts** only: `games`, `white_wins`, `black_wins`, `draws`.
 
 Why this is nice 🙌:
-- You can quickly see opening trends by month and rating bands.
+- You can compute many kinds of stats—opening popularity, win/draw rates, performance by Elo buckets, and trends over time.
 - It’s designed for scale: stream → parse → aggregate in batches → optionally save to DB or CSV.
 - Default run is **safe**: it’s a **dry-run** that doesn’t touch any database unless you say so with `--save`.
 
