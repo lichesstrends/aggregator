@@ -127,7 +127,7 @@ What you’ll see in the terminal:
 - optional “wrote CSV” message if `--out` is set.
 
 ## 🌐Remote mode (Lichess)
-The app reads `list.txt` from Lichess (a list of monthly URLs), sorts **oldest → newest**, and processes month after month.
+The app reads `list.txt` [from Lichess](https://database.lichess.org/standard/list.txt) (a list of monthly URLs), sorts **oldest → newest**, and processes month after month.
 
 ```bash
 # Dry-run up to a given month
