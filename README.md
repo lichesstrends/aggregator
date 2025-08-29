@@ -40,28 +40,36 @@ A tiny sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. T
 ./lta --remote --until 2013-02 -v
 ```
 
-**Save to local SQLite (creates ./data/lichess.db)**
+**Remote stream from Lichess and save to local SQLite (creates ./data/lichess.db)**
 ```bash
 cp .env.example .env       # defaults to local SQLite
 ./lta --save --remote --until 2013-02 -v
 ```
 
-**Write aggregated CSVs (still dry-run for DB):**
+**Write aggregated CSVs:**
 ```bash
 # One CSV per month will be written into ./out/
 ./lta --remote --until 2013-02 --out out/ -v
 ```
 
-**CSV columns**
+> 🔎 Tip: In **local mode**, `--out` can be a **file path** (single CSV). In **remote mode**, `--out` is usually a **directory** (one CSV per month).
+
+The produced CSV will have the following columns:
 ```
 month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws
 ```
 
-> 🔎 Tip: In **local mode**, `--out` can be a **file path** (single CSV). In **remote mode**, `--out` is usually a **directory** (one CSV per month).
+Here is an example row:
+```
+2013-05,C00,1600,1400,523,280,180,63
+```
+
+> 💡 This means: In **May 2013** on Lichess, for games in the **C00 ECO group** (French Defence family) where **White was rated in the 1600–1799 bucket** and **Black in the 1400–1599 bucket**, there were a total of **523 games**. Out of these, **White won 280**, **Black won 180**, and **63 were draws**.
+
 
 ## ⚙️How it works
 ### 1. Streaming pipeline
-- **Remote mode**: The app streams each monthly `*.pgn.zst` over HTTP and pipes it through a **zstd** decoder. There’s no need to store the whole file on disk.
+- **Remote mode**: The app streams each monthly `*.pgn.zst` over HTTP and pipes it through a `zstd` decoder. There’s no need to store the whole file on disk.
 - **Local mode**: The script uses `zstdcat` to decompress the `.zst` you already have and streams it into the app.
 
 ### 2. Processing in batches
@@ -71,7 +79,7 @@ month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws
 - With `--save`, results are persisted using **SQLx** either to a **local SQLite file** or to a **Postgres** database (depending on your `DATABASE_URL`). Batched upserts and transactions are used for speed.
 - Without `--save` → **no DB connections or writes**
 
-The following tables are created (if not already present) when saving :
+The following tables are created (if not already present) when saving:
 - **`aggregates`** — aggregated counts  
   - `month` (TEXT, e.g. `YYYY-MM`)  
   - `eco_group` (TEXT, e.g. `B20`, `C00`, `U00`)  
@@ -94,7 +102,7 @@ The following tables are created (if not already present) when saving :
 
 - **`_sqlx_migrations`** — internal table used by SQLx to record executed migrations
 
-You can reset your local SQLite to start fresh :
+You can reset your local SQLite to start fresh:
 ```bash
 rm -f data/lichess.db data/lichess.db-wal data/lichess.db-shm
 ```
