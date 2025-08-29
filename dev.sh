@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DEFAULT_FILE="lichess_db_standard_rated_2013-01.pgn.zst"
-BIN="/app/target/debug/aggregator"     # binary path inside container
+BIN="/app/target/debug/aggregator"
 CARGO="/usr/local/cargo/bin/cargo"
 
 REMOTE=0
@@ -10,6 +10,7 @@ UNTIL=""
 OUT_HOST="${OUT:-}"
 FILES=()
 LIST_URL=""
+VERBOSE=0
 
 usage() {
   cat <<'EOF'
@@ -18,13 +19,14 @@ Usage:
     ./dev.sh [--out agg.csv] [file1.zst [file2.zst ...]]
 
   Remote ingest (stream from Lichess without saving .zst):
-    ./dev.sh --remote [--until YYYY-MM] [--out out] [--list-url URL]
+    ./dev.sh --remote [--until YYYY-MM] [--out out] [--list-url URL] [-v]
 
 Options:
   --remote               Stream all missing months (oldest -> newest)
   --until YYYY-MM        Stop after this month (inclusive)
   --out, -o PATH         CSV output. If directory, one CSV per month.
   --list-url URL         Override list.txt endpoint
+  -v, --verbose          Show detailed timings/logs
   -h, --help             This help
 
 Notes:
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --until)  UNTIL="${2:-}"; shift 2 ;;
     --out|-o) OUT_HOST="${2:-}"; shift 2 ;;
     --list-url) LIST_URL="${2:-}"; shift 2 ;;
+    -v|--verbose) VERBOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     -*)
@@ -55,37 +58,12 @@ if [[ $REMOTE -eq 0 && ${#FILES[@]} -eq 0 ]]; then
 fi
 
 mkdir -p data
-
-# Bring up services (no recreate if already running)
 docker compose up -d dev dbui >/dev/null
 
-# Wait until dev container is running (avoid "not running" race)
-wait_for_dev() {
-  local tries=20
-  local cid
-  cid="$(docker compose ps -q dev || true)"
-  while [[ -z "$cid" && $tries -gt 0 ]]; do
-    sleep 0.2; tries=$((tries-1))
-    cid="$(docker compose ps -q dev || true)"
-  done
-  if [[ -z "$cid" ]]; then
-    echo "❌ dev container not created"; exit 1
-  fi
-  tries=50
-  while [[ $tries -gt 0 ]]; do
-    local state
-    state="$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null || echo false)"
-    if [[ "$state" == "true" ]]; then return 0; fi
-    sleep 0.2; tries=$((tries-1))
-  done
-  echo "❌ dev container not running"; exit 1
-}
-wait_for_dev
+# Always build incrementally so the binary includes latest code (fast)
+docker compose exec -T dev bash -lc "$CARGO build -q"
 
-# Ensure binary exists (first run or after clean)
-docker compose exec -T dev bash -lc "[ -x '$BIN' ] || $CARGO build -q"
-
-# Normalize OUT path (host->container)
+# Normalize OUT path
 OUT_CONTAINER=""
 if [[ -n "$OUT_HOST" ]]; then
   [[ "$OUT_HOST" == /app/* ]] && OUT_HOST="${OUT_HOST#/app/}"
@@ -101,6 +79,7 @@ if [[ $REMOTE -eq 1 ]]; then
   [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
   [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
   [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
+  [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=("-v")
 
   echo "▶️  Remote ingest starting..."
   docker compose exec -T dev bash -lc "'$BIN' ${APP_ARGS[*]}"
@@ -108,7 +87,10 @@ if [[ $REMOTE -eq 1 ]]; then
   exit 0
 fi
 
-# --- Local file mode ---
+# Local file mode
+BIN_FLAGS=()
+[[ $VERBOSE -eq 1 ]] && BIN_FLAGS+=("-v")
+
 for FILE in "${FILES[@]}"; do
   if [[ ! -f "$FILE" ]]; then
     echo "❌ PGN file not found: $FILE" >&2
@@ -118,9 +100,9 @@ for FILE in "${FILES[@]}"; do
   start_ms=$(date +%s%3N)
 
   if [[ -n "$OUT_CONTAINER" ]]; then
-    cmd="zstdcat '/app/$FILE' | '$BIN' --out '$OUT_CONTAINER'"
+    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]} --out '$OUT_CONTAINER'"
   else
-    cmd="zstdcat '/app/$FILE' | '$BIN'"
+    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]}"
   fi
 
   games=$(docker compose exec -T dev bash -lc "$cmd")

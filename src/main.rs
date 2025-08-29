@@ -1,3 +1,6 @@
+#[macro_use]
+mod verbose;
+
 mod aggregator;
 mod cli;
 mod config;
@@ -15,20 +18,24 @@ async fn main() -> std::io::Result<()> {
     let args = cli::parse();
     let cfg = config::Config::load();
 
+    verbose::set(args.verbose);
     if let Some(n) = cfg.rayon_threads {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
     }
 
+    vprintln!("app: starting, verbose on");
     let dbh = db::connect_from_env().await.expect("DB connect failed");
     db::run_migrations(&dbh).await.expect("DB migrations failed");
 
-    // pick list_url: CLI override > config
+    // CLI --list-url overrides config
     let list_url = if args.list_url.is_empty() { cfg.list_url.clone() } else { args.list_url.clone() };
 
     if args.ingest_remote {
+        vprintln!("remote: building plan from {}", list_url);
         let plan = remote::build_plan(&dbh, &list_url, args.until.as_deref())
             .await
             .expect("build plan failed");
+        vprintln!("remote: plan size after filters = {}", plan.len());
 
         if plan.is_empty() {
             eprintln!("Nothing to ingest (already up to date).");

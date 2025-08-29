@@ -5,6 +5,7 @@ pub struct Cli {
     pub ingest_remote: bool,
     pub until: Option<String>, // "YYYY-MM"
     pub list_url: String,      // list.txt endpoint
+    pub verbose: bool,         // -v / --verbose
 }
 
 pub fn parse() -> Cli {
@@ -12,6 +13,7 @@ pub fn parse() -> Cli {
     let mut ingest_remote = false;
     let mut until: Option<String> = None;
     let mut list_url = "https://database.lichess.org/standard/list.txt".to_string();
+    let mut verbose = false;
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -21,7 +23,7 @@ pub fn parse() -> Cli {
                     out = Some(PathBuf::from(p));
                 }
             }
-            "--ingest-remote" => ingest_remote = true,
+            "--ingest-remote" | "--remote" => ingest_remote = true,
             "--until" => {
                 if let Some(m) = it.next() {
                     until = Some(m);
@@ -32,9 +34,10 @@ pub fn parse() -> Cli {
                     list_url = u;
                 }
             }
+            "--verbose" | "-v" => verbose = true,
             _ => {}
         }
     }
 
-    Cli { out, ingest_remote, until, list_url }
+    Cli { out, ingest_remote, until, list_url, verbose }
 }

@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::time::Instant;
+
 use anyhow::Context;
 use sqlx::{PgPool, SqlitePool};
 use sqlx::postgres::PgPoolOptions;
@@ -36,7 +39,9 @@ pub async fn connect_from_env() -> anyhow::Result<Db> {
     let backend = detect_backend_from_url(&url)?;
     let max = env_var("DB_MAX_CONNECTIONS", "10").parse::<u32>().unwrap_or(10);
 
-    Ok(match backend {
+    vprintln!("db: connecting ({:?}) ...", backend);
+    let t0 = Instant::now();
+    let db = match backend {
         Backend::Sqlite => {
             let pool = SqlitePoolOptions::new()
                 .max_connections(max)
@@ -53,18 +58,32 @@ pub async fn connect_from_env() -> anyhow::Result<Db> {
                 .with_context(|| "connecting to Postgres")?;
             Db::Postgres(pool)
         }
-    })
+    };
+    vprintln!("db: connected in {:.3}s", t0.elapsed().as_secs_f64());
+    Ok(db)
 }
 
 pub async fn run_migrations(db: &Db) -> anyhow::Result<()> {
+    vprintln!("db:migrate: start");
+    let t0 = Instant::now();
     match db {
         Db::Sqlite(pool) => sqlx::migrate!("./migrations").run(pool).await?,
-        Db::Postgres(pool) => sqlx::migrate!("./migrations").run(pool).await?,
+        Db::Postgres(pool) => {
+            // serialize migrations on PG to avoid race (cheap advisory lock)
+            let mut conn = pool.acquire().await?;
+            let lock_key: i64 = 0x4A_67_67_72_45_31;
+            sqlx::query("SELECT pg_advisory_lock($1)").bind(lock_key).execute(&mut *conn).await?;
+            let res = sqlx::migrate!("./migrations").run(&mut *conn).await;
+            let _ = sqlx::query("SELECT pg_advisory_unlock($1)").bind(lock_key).execute(&mut *conn).await;
+            res?;
+        }
     }
+    vprintln!("db:migrate: done in {:.3}s", t0.elapsed().as_secs_f64());
     Ok(())
 }
 
-pub async fn already_ingested_months(db: &Db) -> anyhow::Result<std::collections::HashSet<String>> {
+pub async fn already_ingested_months(db: &Db) -> anyhow::Result<HashSet<String>> {
+    let t0 = Instant::now();
     let months: Vec<String> = match db {
         Db::Sqlite(pool) => {
             sqlx::query_scalar::<_, String>(
@@ -81,13 +100,14 @@ pub async fn already_ingested_months(db: &Db) -> anyhow::Result<std::collections
             .await?
         }
     };
+    vprintln!("db:loaded ingested months = {} in {:.3}s", months.len(), t0.elapsed().as_secs_f64());
     Ok(months.into_iter().collect())
 }
-
 
 pub async fn mark_ingestion_start(
     db: &Db, month: &str, url: &str, started_iso: &str
 ) -> anyhow::Result<()> {
+    vprintln!("db:mark start {} {}", month, url);
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
@@ -120,6 +140,7 @@ pub async fn mark_ingestion_start(
 pub async fn mark_ingestion_finish(
     db: &Db, month: &str, games: i64, duration_ms: i64, status: &str, finished_iso: &str
 ) -> anyhow::Result<()> {
+    vprintln!("db:mark finish {} games={} dur_ms={} status={}", month, games, duration_ms, status);
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
@@ -146,7 +167,6 @@ pub async fn mark_ingestion_finish(
 pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()> {
     if map.is_empty() { return Ok(()); }
 
-    // deterministic order (optional)
     let mut rows: Vec<_> = map.iter().collect();
     rows.sort_by(|(ka, _), (kb, _)| {
         ka.month
@@ -157,8 +177,10 @@ pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()>
     });
 
     match db {
-        // --- SQLite: single-row INSERT OR REPLACE inside one tx ---
+        // -------- SQLite: keep simple per-row inside one tx --------
         Db::Sqlite(pool) => {
+            vprintln!("db:upsert (sqlite) rows={}", rows.len());
+            let t0 = std::time::Instant::now();
             let mut tx = pool.begin().await?;
             let sql = "INSERT OR REPLACE INTO aggregates \
                        (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
@@ -177,34 +199,57 @@ pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()>
                     .await?;
             }
             tx.commit().await?;
+            vprintln!("db:upsert (sqlite) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // --- Postgres: single-row INSERT ... ON CONFLICT ... DO UPDATE inside one tx ---
+        // -------- Postgres: batch multi-row upserts --------
         Db::Postgres(pool) => {
+            vprintln!("db:upsert (postgres) rows={}", rows.len());
+            let t0 = std::time::Instant::now();
+
             let mut tx = pool.begin().await?;
-            let sql = "INSERT INTO aggregates \
-                       (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                       ON CONFLICT (month, eco_group, white_bucket, black_bucket) DO UPDATE SET
-                         games = EXCLUDED.games,
-                         white_wins = EXCLUDED.white_wins,
-                         black_wins = EXCLUDED.black_wins,
-                         draws = EXCLUDED.draws";
-            for (k, c) in &rows {
-                sqlx::query(sql)
-                    .bind(&k.month)
-                    .bind(&k.eco_group)
-                    .bind(k.w_bucket as i32)
-                    .bind(k.b_bucket as i32)
-                    .bind(c.games as i64)
-                    .bind(c.white_wins as i64)
-                    .bind(c.black_wins as i64)
-                    .bind(c.draws as i64)
-                    .execute(&mut *tx)
-                    .await?;
+            // reduce fsync cost for this tx (fine for analytics loads)
+            sqlx::query("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
+
+            let chunk_size = 1000usize;
+
+            for chunk in rows.chunks(chunk_size) {
+                vprintln!("db:upsert (postgres) batching {} rows", chunk.len());
+
+                use sqlx::{Postgres, QueryBuilder};
+
+                let mut qb = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO aggregates \
+                    (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
+                );
+
+                // IMPORTANT: do NOT push "VALUES " manually; push_values adds it.
+                qb.push_values(chunk, |mut b, (k, c)| {
+                    b.push_bind(&k.month)
+                        .push_bind(&k.eco_group)
+                        .push_bind(k.w_bucket as i32)
+                        .push_bind(k.b_bucket as i32)
+                        .push_bind(c.games as i64)
+                        .push_bind(c.white_wins as i64)
+                        .push_bind(c.black_wins as i64)
+                        .push_bind(c.draws as i64);
+                });
+
+                qb.push(
+                    " ON CONFLICT (month, eco_group, white_bucket, black_bucket) DO UPDATE SET \
+                      games = EXCLUDED.games, \
+                      white_wins = EXCLUDED.white_wins, \
+                      black_wins = EXCLUDED.black_wins, \
+                      draws = EXCLUDED.draws"
+                );
+
+                qb.build().execute(&mut *tx).await?;
             }
+
             tx.commit().await?;
+            vprintln!("db:upsert (postgres) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
+
     }
 
     Ok(())
