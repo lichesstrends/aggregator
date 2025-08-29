@@ -19,14 +19,14 @@ async fn main() -> std::io::Result<()> {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
     }
 
-    let pool = db::connect_from_env().await.expect("DB connect failed");
-    db::run_migrations(&pool).await.expect("DB migrations failed");
+    let dbh = db::connect_from_env().await.expect("DB connect failed");
+    db::run_migrations(&dbh).await.expect("DB migrations failed");
 
     // pick list_url: CLI override > config
     let list_url = if args.list_url.is_empty() { cfg.list_url.clone() } else { args.list_url.clone() };
 
     if args.ingest_remote {
-        let plan = remote::build_plan(&pool, &list_url, args.until.as_deref())
+        let plan = remote::build_plan(&dbh, &list_url, args.until.as_deref())
             .await
             .expect("build plan failed");
 
@@ -38,7 +38,7 @@ async fn main() -> std::io::Result<()> {
 
         for item in plan {
             let start_iso = Utc::now().to_rfc3339();
-            db::mark_ingestion_start(&pool, &item.month, &item.url, &start_iso)
+            db::mark_ingestion_start(&dbh, &item.month, &item.url, &start_iso)
                 .await
                 .expect("mark start failed");
 
@@ -65,13 +65,13 @@ async fn main() -> std::io::Result<()> {
                     .await
                     .expect("stream+aggregate failed");
 
-            db::bulk_upsert_aggregates(&pool, &map)
+            db::bulk_upsert_aggregates(&dbh, &map)
                 .await
                 .expect("DB bulk upsert failed");
 
             let finish_iso = Utc::now().to_rfc3339();
             db::mark_ingestion_finish(
-                &pool, &item.month, games as i64, dur_ms as i64, "success", &finish_iso,
+                &dbh, &item.month, games as i64, dur_ms as i64, "success", &finish_iso,
             )
             .await
             .expect("mark finish failed");
@@ -86,7 +86,7 @@ async fn main() -> std::io::Result<()> {
     // stdin mode
     let (map, total_games) =
         aggregator::aggregate_from_reader(std::io::BufReader::new(std::io::stdin().lock()), &cfg)?;
-    db::bulk_upsert_aggregates(&pool, &map).await.expect("DB bulk upsert failed");
+    db::bulk_upsert_aggregates(&dbh, &map).await.expect("DB bulk upsert failed");
     if let Some(out) = args.out.as_deref() {
         aggregator::write_csv(&map, Path::new(out)).expect("CSV write failed");
     }

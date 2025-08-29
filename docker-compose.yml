@@ -4,12 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     working_dir: /app
+    env_file:
+      - .env
     environment:
-      # DB env (good defaults; override in .env or compose overrides if you want)
-      DATABASE_URL: "sqlite:///data/lichess.db"
-      DB_MAX_CONNECTIONS: "10"
-      SQLITE_JOURNAL_MODE: "WAL"    # or MEMORY (WAL is great for speed + durability)
-      SQLITE_SYNCHRONOUS: "NORMAL"  # OFF is faster, NORMAL is a good balance
+      # ensure cargo/binaries are on PATH even in non-login shells
+      PATH: "/usr/local/cargo/bin:/usr/local/rustup/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     volumes:
       - .:/app
       - ./data:/data
@@ -17,13 +16,10 @@ services:
       - cargo-git:/usr/local/cargo/git
       - target-cache:/app/target
     tty: true
-    command: >
-      bash -c "
-        echo '🔁 cargo-watch running (debug build)...';
-        cargo-watch -x 'run -- --help >/dev/null || true' -x 'run'
-      "
+    # keep container alive; dev.sh will run the compiled binary
+    command: ["bash", "-lc", "sleep infinity"]
 
-  # Simple web GUI for SQLite, open http://localhost:8080
+  # SQLite web UI (harmless if you use Neon; it just serves ./data/lichess.db)
   dbui:
     image: coleifer/sqlite-web:latest
     command: ["sqlite_web", "-H", "0.0.0.0", "-p", "8080", "/data/lichess.db"]
@@ -31,8 +27,6 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/data
-    depends_on:
-      - dev
 
 volumes:
   cargo-registry:

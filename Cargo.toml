@@ -5,7 +5,13 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
-sqlx  = { version = "0.7", features = ["runtime-tokio", "sqlite", "macros"] }
+sqlx  = { version = "0.7", features = [
+  "sqlite",                # SQLite driver
+  "postgres",              # Postgres driver
+  "runtime-tokio-rustls",  # TLS without OpenSSL
+  "macros",
+  "migrate"                # (optional) but nice since you use migrations
+] }
 dotenvy = "0.15"
 anyhow = "1"
 rayon = "1.11"

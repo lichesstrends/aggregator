@@ -48,7 +48,7 @@ fn parse_list_to_oldest(list_txt: &str) -> Vec<PlanItem> {
 /// - drop months already ingested with status 'success'
 /// - if `until` is Some("YYYY-MM"), keep only <= that month (inclusive)
 pub async fn build_plan(
-    pool: &sqlx::SqlitePool,
+    dbh: &crate::db::Db,
     list_url: &str,
     until: Option<&str>,
 ) -> anyhow::Result<Vec<PlanItem>> {
@@ -65,7 +65,7 @@ pub async fn build_plan(
         items.retain(|it| it.month.as_str() <= until_m);
     }
 
-    let done = db::already_ingested_months(pool).await?;
+    let done = db::already_ingested_months(dbh).await?;
     items.retain(|it| !done.contains(&it.month));
 
     Ok(items)
