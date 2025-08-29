@@ -8,8 +8,5 @@ CREATE TABLE IF NOT EXISTS aggregates (
   white_wins   INTEGER NOT NULL,
   black_wins   INTEGER NOT NULL,
   draws        INTEGER NOT NULL,
-  white_pct    REAL NOT NULL,
-  black_pct    REAL NOT NULL,
-  draw_pct     REAL NOT NULL,
   PRIMARY KEY (month, eco_group, white_bucket, black_bucket)
 );

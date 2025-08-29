@@ -42,13 +42,4 @@ impl Counter {
             _ => {}
         }
     }
-    pub fn percentages(&self) -> (f64, f64, f64) {
-        if self.games == 0 { return (0.0, 0.0, 0.0); }
-        let g = self.games as f64;
-        (
-            (self.white_wins as f64) * 100.0 / g,
-            (self.black_wins as f64) * 100.0 / g,
-            (self.draws as f64) * 100.0 / g,
-        )
-    }
 }

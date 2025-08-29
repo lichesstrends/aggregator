@@ -101,21 +101,23 @@ pub fn write_csv(map: &AggMap, out_path: &Path) -> io::Result<()> {
     entries.sort_by_key(|(_, c)| std::cmp::Reverse(c.games));
 
     let mut f = File::create(out_path)?;
+    // counts only
     writeln!(
         f,
-        "month,eco_group,white_bucket,black_bucket,games,white_pct,black_pct,draw_pct"
+        "month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws"
     )?;
     for (k, c) in entries {
-        let (w, b, d) = c.percentages();
         writeln!(
             f,
-            "{},{},{},{},{},{:.3},{:.3},{:.3}",
+            "{},{},{},{},{},{},{},{}",
             k.month,
             k.eco_group,
             k.w_bucket,
             k.b_bucket,
             c.games,
-            w, b, d
+            c.white_wins,
+            c.black_wins,
+            c.draws
         )?;
     }
     Ok(())

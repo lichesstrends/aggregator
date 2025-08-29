@@ -57,13 +57,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 /// Bulk upsert all aggregate rows in a single transaction.
-/// We also compute normalized percentages here and store them.
 pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::Result<()> {
     if map.is_empty() {
         return Ok(());
     }
 
-    // Collect rows in a deterministic order (optional)
+    // Deterministic order (optional)
     let mut rows: Vec<_> = map.iter().collect();
     rows.sort_by(|(ka, _), (kb, _)| {
         ka.month
@@ -74,32 +73,29 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
     });
 
     // SQLite default max variables is 999.
-    // We bind 11 columns per row => 90 rows per statement is safe.
-    const COLS_PER_ROW: usize = 11;
+    // We bind 8 columns per row => safe batch size ~120 rows.
+    const COLS_PER_ROW: usize = 8;
     const SQLITE_MAX_VARS: usize = 999;
     let max_rows_per_batch = std::cmp::max(1, (SQLITE_MAX_VARS / COLS_PER_ROW) - 1);
 
     let mut tx = pool.begin().await?;
 
     for chunk in rows.chunks(max_rows_per_batch) {
-        // Build: INSERT OR REPLACE INTO aggregates (...) VALUES (?,?,?,?,?,?,?,?,?,?,?),(...) ;
+        // INSERT OR REPLACE INTO aggregates (...) VALUES (?,?,?,?,?,?,?,?),(...) ;
         let mut sql = String::from(
             "INSERT OR REPLACE INTO aggregates \
-             (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws, white_pct, black_pct, draw_pct) \
-             VALUES ",
+             (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
+             VALUES "
         );
 
         for i in 0..chunk.len() {
-            if i > 0 {
-                sql.push(',');
-            }
-            sql.push_str("(?,?,?,?,?,?,?,?,?,?,?)");
+            if i > 0 { sql.push(','); }
+            sql.push_str("(?,?,?,?,?,?,?,?)");
         }
 
         let mut q = sqlx::query(&sql);
 
         for (k, c) in chunk {
-            let (wp, bp, dp) = c.percentages();
             q = q
                 .bind(&k.month)
                 .bind(&k.eco_group)
@@ -108,10 +104,7 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
                 .bind(c.games as i64)
                 .bind(c.white_wins as i64)
                 .bind(c.black_wins as i64)
-                .bind(c.draws as i64)
-                .bind(wp)
-                .bind(bp)
-                .bind(dp);
+                .bind(c.draws as i64);
         }
 
         q.execute(&mut *tx).await?;
