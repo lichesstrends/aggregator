@@ -1,9 +1,9 @@
--- Aggregated results by month + opening + 100-pt elo buckets
+-- Aggregated results by month + opening ECO code + 200-pt elo buckets
 CREATE TABLE IF NOT EXISTS aggregates (
   month        TEXT NOT NULL,
-  opening      TEXT NOT NULL,
-  white_bucket INTEGER NOT NULL,
-  black_bucket INTEGER NOT NULL,
+  eco_group    TEXT NOT NULL,       -- e.g., B20, C00, E60, or U00 if unknown
+  white_bucket INTEGER NOT NULL,    -- lower bound of bucket (e.g., 2200)
+  black_bucket INTEGER NOT NULL,    -- lower bound of bucket (e.g., 2200)
   games        INTEGER NOT NULL,
   white_wins   INTEGER NOT NULL,
   black_wins   INTEGER NOT NULL,
@@ -11,5 +11,5 @@ CREATE TABLE IF NOT EXISTS aggregates (
   white_pct    REAL NOT NULL,
   black_pct    REAL NOT NULL,
   draw_pct     REAL NOT NULL,
-  PRIMARY KEY (month, opening, white_bucket, black_bucket)
+  PRIMARY KEY (month, eco_group, white_bucket, black_bucket)
 );

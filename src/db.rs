@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
@@ -67,7 +68,7 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
     rows.sort_by(|(ka, _), (kb, _)| {
         ka.month
             .cmp(&kb.month)
-            .then_with(|| ka.opening.cmp(&kb.opening))
+            .then_with(|| ka.eco_group.cmp(&kb.eco_group))
             .then_with(|| ka.w_bucket.cmp(&kb.w_bucket))
             .then_with(|| ka.b_bucket.cmp(&kb.b_bucket))
     });
@@ -84,7 +85,7 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
         // Build: INSERT OR REPLACE INTO aggregates (...) VALUES (?,?,?,?,?,?,?,?,?,?,?),(...) ;
         let mut sql = String::from(
             "INSERT OR REPLACE INTO aggregates \
-             (month, opening, white_bucket, black_bucket, games, white_wins, black_wins, draws, white_pct, black_pct, draw_pct) \
+             (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws, white_pct, black_pct, draw_pct) \
              VALUES ",
         );
 
@@ -101,7 +102,7 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
             let (wp, bp, dp) = c.percentages();
             q = q
                 .bind(&k.month)
-                .bind(&k.opening)
+                .bind(&k.eco_group)
                 .bind(k.w_bucket as i64)
                 .bind(k.b_bucket as i64)
                 .bind(c.games as i64)
@@ -117,5 +118,41 @@ pub async fn bulk_upsert_aggregates(pool: &SqlitePool, map: &AggMap) -> anyhow::
     }
 
     tx.commit().await?;
+    Ok(())
+}
+
+pub async fn already_ingested_months(pool: &SqlitePool) -> anyhow::Result<HashSet<String>> {
+    let rows = sqlx::query_scalar::<_, String>("SELECT month FROM ingestions WHERE status = 'success'")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+pub async fn mark_ingestion_start(pool: &SqlitePool, month: &str, url: &str, started_iso: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO ingestions (month, url, started_at, status)
+         VALUES (?1, ?2, ?3, 'started')
+         ON CONFLICT(month) DO UPDATE SET url=excluded.url, started_at=excluded.started_at, status='started'"
+    )
+    .bind(month).bind(url).bind(started_iso)
+    .execute(pool).await?;
+    Ok(())
+}
+
+pub async fn mark_ingestion_finish(pool: &SqlitePool, month: &str, games: i64, duration_ms: i64, status: &str, finished_iso: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE ingestions
+           SET games = ?2,
+               duration_ms = ?3,
+               status = ?4,
+               finished_at = ?5
+         WHERE month = ?1"
+    )
+    .bind(month)
+    .bind(games)
+    .bind(duration_ms)
+    .bind(status)
+    .bind(finished_iso)
+    .execute(pool).await?;
     Ok(())
 }
