@@ -60,11 +60,21 @@ async fn fetch_list(list_url: &str) -> anyhow::Result<String> {
 pub async fn build_plan(
     dbh: &crate::db::Db,
     list_url: &str,
+    since: Option<&str>,
     until: Option<&str>,
 ) -> anyhow::Result<Vec<PlanItem>> {
     let text = fetch_list(list_url).await?;
     let mut items = parse_list_to_oldest(&text);
     vprintln!("remote: months available = {}", items.len());
+
+    if let Some(since_m) = since {
+        let before = items.len();
+        items.retain(|it| it.month.as_str() >= since_m);
+        vprintln!(
+            "remote: filtered by since={} -> {} items (was {})",
+            since_m, items.len(), before
+        );
+    }
 
     if let Some(until_m) = until {
         let before = items.len();
@@ -90,11 +100,21 @@ pub async fn build_plan(
 /// Build plan without touching DB (dry-run path).
 pub async fn plan_no_db(
     list_url: &str,
+    since: Option<&str>,
     until: Option<&str>,
 ) -> anyhow::Result<Vec<PlanItem>> {
     let text = fetch_list(list_url).await?;
     let mut items = parse_list_to_oldest(&text);
     vprintln!("remote: months available = {}", items.len());
+
+    if let Some(since_m) = since {
+        let before = items.len();
+        items.retain(|it| it.month.as_str() >= since_m);
+        vprintln!(
+            "remote: filtered by since={} -> {} items (was {})",
+            since_m, items.len(), before
+        );
+    }
 
     if let Some(until_m) = until {
         let before = items.len();

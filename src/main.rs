@@ -28,6 +28,7 @@ async fn main() -> std::io::Result<()> {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
     }
 
+    // list_url is only defined in config; CLI can override it with --list-url
     let list_url = if args.list_url.is_empty() { cfg.list_url.clone() } else { args.list_url.clone() };
 
     // --- REMOTE MODE ---
@@ -38,7 +39,7 @@ async fn main() -> std::io::Result<()> {
             db::run_migrations(&dbh).await.expect("DB migrations failed");
 
             vprintln!("remote: building plan from {}", list_url);
-            let plan = remote::build_plan(&dbh, &list_url, args.until.as_deref())
+            let plan = remote::build_plan(&dbh, &list_url, args.since.as_deref(), args.until.as_deref())
                 .await
                 .expect("build plan failed");
             vprintln!("remote: plan size after filters = {}", plan.len());
@@ -78,7 +79,7 @@ async fn main() -> std::io::Result<()> {
         } else {
             // DRY-RUN remote: no DB touches at all
             vprintln!("remote (dry-run): building plan (no DB) from {}", list_url);
-            let plan = remote::plan_no_db(&list_url, args.until.as_deref())
+            let plan = remote::plan_no_db(&list_url, args.since.as_deref(), args.until.as_deref())
                 .await
                 .expect("build plan (no DB) failed");
             vprintln!("remote (dry-run): items = {}", plan.len());

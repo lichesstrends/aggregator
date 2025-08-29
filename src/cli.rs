@@ -3,8 +3,9 @@ use std::path::PathBuf;
 pub struct Cli {
     pub out: Option<PathBuf>,
     pub ingest_remote: bool,
-    pub until: Option<String>, // "YYYY-MM"
-    pub list_url: String,      // list.txt endpoint
+    pub since: Option<String>, // "YYYY-MM" (lower bound, inclusive)
+    pub until: Option<String>, // "YYYY-MM" (upper bound, inclusive)
+    pub list_url: String,      // optional override (default from config)
     pub verbose: bool,
     pub save: bool,
     pub help: bool,
@@ -13,8 +14,9 @@ pub struct Cli {
 pub fn parse() -> Cli {
     let mut out: Option<PathBuf> = None;
     let mut ingest_remote = false;
+    let mut since: Option<String> = None;
     let mut until: Option<String> = None;
-    let mut list_url = "https://database.lichess.org/standard/list.txt".to_string();
+    let mut list_url = String::new(); // ← no default here; config.toml is the default
     let mut verbose = false;
     let mut save = false;
     let mut help = false;
@@ -26,6 +28,9 @@ pub fn parse() -> Cli {
                 if let Some(p) = it.next() { out = Some(PathBuf::from(p)); }
             }
             "--ingest-remote" | "--remote" => ingest_remote = true,
+            "--since" | "--from" => {
+                if let Some(m) = it.next() { since = Some(m); }
+            }
             "--until" => {
                 if let Some(m) = it.next() { until = Some(m); }
             }
@@ -39,23 +44,24 @@ pub fn parse() -> Cli {
         }
     }
 
-    Cli { out, ingest_remote, until, list_url, verbose, save, help }
+    Cli { out, ingest_remote, since, until, list_url, verbose, save, help }
 }
 
 pub fn print_help() {
     eprintln!(
-r#"Lichess Trends Aggregator
+r#"LichessTrends Aggregator
 
 Usage:
   Local file(s):
     aggregator [--out agg.csv] [file1.zst [file2.zst ...]] [--save] [-v]
 
   Remote ingest (stream from Lichess without saving .zst):
-    aggregator --remote [--until YYYY-MM] [--out OUT] [--list-url URL] [--save] [-v]
+    aggregator --remote [--since YYYY-MM] [--until YYYY-MM] [--out OUT] [--list-url URL] [--save] [-v]
 
 Options:
-  --remote, --ingest-remote   Stream monthly dumps (oldest -> newest).
-  --until YYYY-MM             Stop after this month (inclusive) in remote mode.
+  --remote, --ingest-remote   Stream monthly dumps (oldest → newest).
+  --since YYYY-MM, --from     Start from this month (inclusive).
+  --until YYYY-MM             Stop after this month (inclusive).
   --out, -o PATH              CSV output.
                               - local: a file path (e.g., out/agg.csv)
                               - remote: directory for one CSV per month,
@@ -67,6 +73,7 @@ Options:
 
 Notes:
   • Default is DRY-RUN: no DB connection, no migrations, no writes.
-  • Configure defaults in config.toml (bucket size, list URL, batch size, rayon threads).
+  • list_url is configured in config.toml; CLI --list-url overrides it.
+  • Configure processing and DB batch sizes in config.toml.
 "#);
 }

@@ -38,6 +38,9 @@ A sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wr
 ```bash
 # Oldest → newest, stop at (and include) 2013-02
 ./lta --remote --until 2013-02 -v
+
+# Range selection (inclusive on both ends): from 2015-01 to 2015-03
+./lta --remote --since 2015-01 --until 2015-03 -v
 ```
 
 **Remote stream from Lichess and save to local SQLite (creates ./data/lichess.db)**
@@ -140,7 +143,7 @@ The app reads `list.txt` [from Lichess](https://database.lichess.org/standard/li
 ./lta --remote --until 2013-05 --save -v
 
 # Use a custom index (if you mirror Lichess)
-./lta --remote --list-url https://my.mirror/standard/list.txt --until 2013-05
+./lta --remote --list-url https://my.mirror/standard/list.txt --since 2015-01 --until 2015-03
 ```
 
 What you’ll see:
@@ -167,17 +170,19 @@ DB_MAX_CONNECTIONS=10
 All knobs live in `config.toml`:
 
 ```toml
-bucket_size   = 200   # Elo bucket size for white/black buckets
-list_url      = "https://database.lichess.org/standard/list.txt"
-batch_size    = 1000  # games per aggregation batch (Rayon)
+bucket_size = 200     # Elo bucket size for white/black buckets
+list_url    = "https://database.lichess.org/standard/list.txt"
 db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
-# rayon_threads = 8   # pin Rayon threads; default = CPU count
+
+# Rayon setup
+batch_size  = 1000   # games per aggregation batch
+# rayon_threads = 8  # pin Rayon threads; default = CPU count
 ```
 
 - **bucket_size**: Elo bucket width (e.g., 200 → 1200–1399, 1400–1599, …).
-- **list_url**: the Lichess monthly index; change if you mirror it.
-- **batch_size**: number of games processed at a time before merging.
+- **list_url**: the Lichess monthly index; change if you mirror it. If you pass `--list-url` on the CLI, it overrides this value for that run.
 - **db_batch_rows**: how many rows are inserted/updated per DB batch.
+- **batch_size**: number of games processed at a time before merging.
 - **rayon_threads**: set to force a specific parallelism; otherwise uses CPU count.
 
 ## 💻CLI reference
@@ -185,6 +190,7 @@ db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
 # Default is DRY-RUN: no DB connection and no writes.
 
 --remote, --ingest-remote    Stream monthly dumps from Lichess (oldest → newest)
+--since YYYY-MM, --from      Start from this month (inclusive) in remote mode
 --until YYYY-MM              Stop after this month (inclusive) in remote mode
 --out, -o PATH               CSV output
                              - local: a file path (e.g., out/agg.csv)

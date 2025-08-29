@@ -6,50 +6,34 @@ BIN="/app/target/debug/aggregator"
 CARGO="/usr/local/cargo/bin/cargo"
 
 REMOTE=0
+SINCE=""
 UNTIL=""
 OUT_HOST="${OUT:-}"
 FILES=()
 LIST_URL=""
 VERBOSE=0
 SAVE=0
-
-usage() {
-  cat <<'EOF'
-LichessTrends Aggregator (wrapper)
-
-Usage:
-  Local file(s):
-    lta [--out agg.csv] [file1.zst [file2.zst ...]] [--save] [-v]
-
-  Remote ingest (stream from Lichess, no files saved):
-    lta --remote [--until YYYY-MM] [--out OUT] [--list-url URL] [--save] [-v]
-
-Options:
-  --remote                  Stream monthly dumps (oldest -> newest)
-  --until YYYY-MM           Stop after this month (inclusive)
-  --out, -o PATH            CSV output (dir = one CSV per month)
-  --list-url URL            Override list.txt endpoint
-  --save                    Persist to DB (migrations + writes). Default: DRY-RUN
-  -v, --verbose             Detailed timings/logs
-  -h, --help                This help
-
-Notes:
-  - Dry-run by default: no DB connection/writes.
-  - Local SQLite file persists in ./data/lichess.db (only used if you pass --save)
-EOF
-}
+PROCESSED_ANY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --remote|--ingest-remote) REMOTE=1; shift ;;
+    --since|--from) SINCE="${2:-}"; shift 2 ;;
     --until)  UNTIL="${2:-}"; shift 2 ;;
     --out|-o) OUT_HOST="${2:-}"; shift 2 ;;
     --list-url) LIST_URL="${2:-}"; shift 2 ;;
     --save) SAVE=1; shift ;;
     -v|--verbose) VERBOSE=1; shift ;;
-    -h|--help) usage; exit 0 ;;
+    -h|--help)
+      # forward to the app's help (single source of truth)
+      mkdir -p data
+      docker compose up -d dev >/dev/null
+      docker compose exec -T dev bash -lc "$CARGO build -q"
+      docker compose exec -T dev bash -lc "'$BIN' --help"
+      exit 0
+      ;;
     --) shift; break ;;
-    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *)  FILES+=("$1"); shift ;;
   esac
 done
@@ -60,7 +44,6 @@ fi
 
 mkdir -p data
 docker compose up -d dev >/dev/null
-# (dbui not started automatically anymore)
 docker compose exec -T dev bash -lc "$CARGO build -q"
 
 OUT_CONTAINER=""
@@ -75,6 +58,7 @@ fi
 
 if [[ $REMOTE -eq 1 ]]; then
   APP_ARGS=(--remote)
+  [[ -n "$SINCE" ]]         && APP_ARGS+=(--since "$SINCE")
   [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
   [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
   [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
@@ -108,6 +92,7 @@ for FILE in "${FILES[@]}"; do
   fi
 
   games=$(docker compose exec -T dev bash -lc "$cmd")
+  PROCESSED_ANY=1
 
   end_ms=$(date +%s%3N)
   elapsed_ms=$((end_ms - start_ms))
@@ -125,4 +110,8 @@ for FILE in "${FILES[@]}"; do
   fi
 done
 
-echo "✅ Local ingest completed."
+if [[ $PROCESSED_ANY -eq 1 ]]; then
+  echo "✅ Local ingest completed."
+else
+  echo "ℹ️  No local files were processed."
+fi
