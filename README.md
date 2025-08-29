@@ -1,6 +1,6 @@
 # ♔♕Lichess Trends Aggregator (`lta`)
 
-The **Lichess Trends Aggregator** is a fast, streaming **Rust** tool that turns the massive monthly **Lichess PGN** dumps into compact, queryable statistics. It:
+The **Lichess Trends Aggregator** is a fast, streaming **Rust** tool that turns the massive monthly **Lichess PGN** dumps (available at [database.lichess.org](https://database.lichess.org/)) into compact, queryable statistics. It:
 
 - fetches monthly PGN dumps from **Lichess** (or reads your local `.pgn.zst` files);
 - **streams** and decodes them on the fly (no giant temp files);
