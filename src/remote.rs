@@ -38,6 +38,20 @@ fn parse_list_to_oldest(list_txt: &str) -> Vec<PlanItem> {
     items
 }
 
+fn norm_month(s: &str) -> Option<String> {
+    // Accept "YYYY-MM", "YYYY-M", "YYYY/MM", "YYYY.MM"
+    let s = s.trim();
+    let parts: Vec<&str> = s.split(|c| c == '-' || c == '/' || c == '.').collect();
+    if parts.len() < 2 { return None; }
+    let y = parts[0];
+    let m = parts[1];
+    if y.len() != 4 || !y.chars().all(|c| c.is_ascii_digit()) { return None; }
+    if !m.chars().all(|c| c.is_ascii_digit()) { return None; }
+    let mi: u32 = m.parse().ok()?;
+    if !(1..=12).contains(&mi) { return None; }
+    Some(format!("{}-{:02}", y, mi))
+}
+
 async fn fetch_list(list_url: &str) -> anyhow::Result<String> {
     vprintln!("remote: GET {}", list_url);
     let t0 = Instant::now();
@@ -67,18 +81,21 @@ pub async fn build_plan(
     let mut items = parse_list_to_oldest(&text);
     vprintln!("remote: months available = {}", items.len());
 
-    if let Some(since_m) = since {
+    let since_n = since.and_then(norm_month);
+    let until_n = until.and_then(norm_month);
+
+    if let Some(ref since_m) = since_n {
         let before = items.len();
-        items.retain(|it| it.month.as_str() >= since_m);
+        items.retain(|it| it.month.as_str() >= since_m.as_str());
         vprintln!(
             "remote: filtered by since={} -> {} items (was {})",
             since_m, items.len(), before
         );
     }
 
-    if let Some(until_m) = until {
+    if let Some(ref until_m) = until_n {
         let before = items.len();
-        items.retain(|it| it.month.as_str() <= until_m);
+        items.retain(|it| it.month.as_str() <= until_m.as_str());
         vprintln!(
             "remote: filtered by until={} -> {} items (was {})",
             until_m, items.len(), before
@@ -107,18 +124,21 @@ pub async fn plan_no_db(
     let mut items = parse_list_to_oldest(&text);
     vprintln!("remote: months available = {}", items.len());
 
-    if let Some(since_m) = since {
+    let since_n = since.and_then(norm_month);
+    let until_n = until.and_then(norm_month);
+
+    if let Some(ref since_m) = since_n {
         let before = items.len();
-        items.retain(|it| it.month.as_str() >= since_m);
+        items.retain(|it| it.month.as_str() >= since_m.as_str());
         vprintln!(
             "remote: filtered by since={} -> {} items (was {})",
             since_m, items.len(), before
         );
     }
 
-    if let Some(until_m) = until {
+    if let Some(ref until_m) = until_n {
         let before = items.len();
-        items.retain(|it| it.month.as_str() <= until_m);
+        items.retain(|it| it.month.as_str() <= until_m.as_str());
         vprintln!(
             "remote: filtered by until={} -> {} items (was {})",
             until_m, items.len(), before
