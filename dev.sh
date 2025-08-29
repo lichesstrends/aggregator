@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_FILE="lichess_db_standard_rated_2013-01.pgn.zst"
+DEFAULT_FILE="sample/lichess_sample.pgn.zst"
 BIN="/app/target/debug/aggregator"
 CARGO="/usr/local/cargo/bin/cargo"
 
@@ -11,59 +11,56 @@ OUT_HOST="${OUT:-}"
 FILES=()
 LIST_URL=""
 VERBOSE=0
+SAVE=0
 
 usage() {
   cat <<'EOF'
 Usage:
   Local file(s):
-    ./dev.sh [--out agg.csv] [file1.zst [file2.zst ...]]
+    ./dev.sh [--out agg.csv] [file1.zst [file2.zst ...]] [--save] [-v]
 
   Remote ingest (stream from Lichess without saving .zst):
-    ./dev.sh --remote [--until YYYY-MM] [--out out] [--list-url URL] [-v]
+    ./dev.sh --remote [--until YYYY-MM] [--out out] [--list-url URL] [--save] [-v]
 
 Options:
-  --remote               Stream all missing months (oldest -> newest)
+  --remote               Stream monthly dumps (oldest -> newest)
   --until YYYY-MM        Stop after this month (inclusive)
-  --out, -o PATH         CSV output. If directory, one CSV per month.
+  --out, -o PATH         CSV output. If directory, writes one CSV per month.
   --list-url URL         Override list.txt endpoint
-  -v, --verbose          Show detailed timings/logs
+  --save                 Persist to DB (run migrations, writes). Default: DRY-RUN
+  -v, --verbose          Detailed timings/logs
   -h, --help             This help
 
 Notes:
+  - Dry-run by default: no DB connection/writes.
   - DB UI (SQLite only): http://localhost:8080
   - SQLite file persists in ./data/lichess.db
 EOF
 }
 
-# --- parse args ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --remote|--ingest-remote) REMOTE=1; shift ;;
     --until)  UNTIL="${2:-}"; shift 2 ;;
     --out|-o) OUT_HOST="${2:-}"; shift 2 ;;
     --list-url) LIST_URL="${2:-}"; shift 2 ;;
+    --save) SAVE=1; shift ;;
     -v|--verbose) VERBOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
-    -*)
-      echo "Unknown option: $1" >&2; usage; exit 1 ;;
-    *)
-      FILES+=("$1"); shift ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *)  FILES+=("$1"); shift ;;
   esac
 done
 
-# defaults for local mode
 if [[ $REMOTE -eq 0 && ${#FILES[@]} -eq 0 ]]; then
   FILES=("${LICHESS_FILE:-$DEFAULT_FILE}")
 fi
 
 mkdir -p data
 docker compose up -d dev dbui >/dev/null
-
-# Always build incrementally so the binary includes latest code (fast)
 docker compose exec -T dev bash -lc "$CARGO build -q"
 
-# Normalize OUT path
 OUT_CONTAINER=""
 if [[ -n "$OUT_HOST" ]]; then
   [[ "$OUT_HOST" == /app/* ]] && OUT_HOST="${OUT_HOST#/app/}"
@@ -75,11 +72,12 @@ if [[ -n "$OUT_HOST" ]]; then
 fi
 
 if [[ $REMOTE -eq 1 ]]; then
-  APP_ARGS=(--ingest-remote)
+  APP_ARGS=(--remote)
   [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
   [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
   [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
   [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=("-v")
+  [[ $SAVE -eq 1 ]]         && APP_ARGS+=("--save")
 
   echo "▶️  Remote ingest starting..."
   docker compose exec -T dev bash -lc "'$BIN' ${APP_ARGS[*]}"
@@ -87,9 +85,9 @@ if [[ $REMOTE -eq 1 ]]; then
   exit 0
 fi
 
-# Local file mode
 BIN_FLAGS=()
 [[ $VERBOSE -eq 1 ]] && BIN_FLAGS+=("-v")
+[[ $SAVE -eq 1 ]] && BIN_FLAGS+=("--save")
 
 for FILE in "${FILES[@]}"; do
   if [[ ! -f "$FILE" ]]; then
