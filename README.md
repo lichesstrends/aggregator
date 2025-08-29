@@ -16,14 +16,14 @@ Why this is nice 🙌:
 - It’s designed for scale: stream → parse → aggregate in batches → optionally save to DB or CSV.
 - Default run is **safe**: it’s a **dry-run** that doesn’t touch any database unless you say so with `--save`.
 
-## Requirements
+## 🐳Requirements
 - **Docker**
 - **Docker Compose**
 
 That’s it! 😊
 
 ## 🚀Getting started
-A tiny sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wrapper script **`lta`** builds and runs everything inside Docker for you.
+A sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wrapper script **`lta`** builds and runs everything inside Docker for you.
 
 ```bash
 # Show help and build on first run
