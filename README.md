@@ -16,15 +16,11 @@ Why this is nice 🙌:
 - It’s designed for scale: stream → parse → aggregate in batches → optionally save to DB or CSV.
 - Default run is **safe**: it’s a **dry-run** that doesn’t touch any database unless you say so with `--save`.
 
----
-
 ## Requirements
 - **Docker**
 - **Docker Compose**
 
-That’s it! 🚀
-
----
+That’s it! 😊
 
 ## 🚀Getting started
 A tiny sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wrapper script **`lta`** builds and runs everything inside Docker for you.
@@ -62,8 +58,6 @@ month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws
 ```
 
 > 🔎 Tip: In **local mode**, `--out` can be a **file path** (single CSV). In **remote mode**, `--out` is usually a **directory** (one CSV per month).
-
----
 
 ## ⚙️How it works
 ### 1. Streaming pipeline
@@ -104,7 +98,6 @@ You can reset your local SQLite to start fresh :
 ```bash
 rm -f data/lichess.db data/lichess.db-wal data/lichess.db-shm
 ```
----
 
 ## 🗂️Local mode (details)
 Use a local `.pgn.zst` file you already have (no extraction needed).
@@ -124,8 +117,6 @@ cp .env.example .env
 What you’ll see in the terminal:
 - per-file timing + number of games processed;
 - optional “wrote CSV” message if `--out` is set.
-
----
 
 ## 🌐Remote mode (Lichess)
 The app reads `list.txt` from Lichess (a list of monthly URLs), sorts **oldest → newest**, and processes month after month.
@@ -149,8 +140,6 @@ What you’ll see:
 - optional CSV write messages if `--out` is set.
 - with `--save`, results are written to the DB and each processed month is kept track of in the ingestions table.
 
----
-
 ## 🗄️Remote database setup (Postgres)
 You can push results into a remote **Postgres** database. Create a `.env` file, then run with `--save`.
 
@@ -165,8 +154,6 @@ DB_MAX_CONNECTIONS=10
 ```bash
 ./lta --save --remote --until 2013-05 -v
 ```
-
----
 
 ## 🛠️Configuration (`config.toml`)
 All knobs live in `config.toml`:
@@ -185,8 +172,6 @@ db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
 - **db_batch_rows**: how many rows are inserted/updated per DB batch.
 - **rayon_threads**: set to force a specific parallelism; otherwise uses CPU count.
 
----
-
 ## 💻CLI reference
 ```
 # Default is DRY-RUN: no DB connection and no writes.
@@ -203,12 +188,8 @@ db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
 -h, --help                   Show built-in help
 ```
 
----
-
 ## 📜License
 This project is licensed under the terms of the MIT license.
-
----
 
 ## 🤝Contribution
 We welcome contributions! 💡 Issues, PRs, and ideas are all appreciated.
