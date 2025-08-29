@@ -164,7 +164,11 @@ pub async fn mark_ingestion_finish(
     Ok(())
 }
 
-pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()> {
+pub async fn bulk_upsert_aggregates(
+    db: &Db,
+    map: &AggMap,
+    cfg_chunk_size: usize,
+) -> anyhow::Result<()> {
     if map.is_empty() { return Ok(()); }
 
     let mut rows: Vec<_> = map.iter().collect();
@@ -177,54 +181,67 @@ pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()>
     });
 
     match db {
-        // -------- SQLite: keep simple per-row inside one tx --------
+        // ------------- SQLite: batched VALUES lists -------------
         Db::Sqlite(pool) => {
-            vprintln!("db:upsert (sqlite) rows={}", rows.len());
+            // 8 params per row; SQLite default param limit ~999 → 999/8 ~= 124
+            let max_sqlite_rows = 120usize;
+            let chunk = cfg_chunk_size.min(max_sqlite_rows);
+
+            vprintln!("db:upsert (sqlite) rows={} chunk={}", rows.len(), chunk);
             let t0 = std::time::Instant::now();
             let mut tx = pool.begin().await?;
-            let sql = "INSERT OR REPLACE INTO aggregates \
-                       (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            for (k, c) in &rows {
-                sqlx::query(sql)
-                    .bind(&k.month)
-                    .bind(&k.eco_group)
-                    .bind(k.w_bucket as i64)
-                    .bind(k.b_bucket as i64)
-                    .bind(c.games as i64)
-                    .bind(c.white_wins as i64)
-                    .bind(c.black_wins as i64)
-                    .bind(c.draws as i64)
-                    .execute(&mut *tx)
-                    .await?;
+
+            for chunk_rows in rows.chunks(chunk) {
+                // Build: INSERT OR REPLACE ... VALUES (?,?,?,?,?,?,?,?),(?,?,?,?,?,?,?,?)...
+                let mut sql = String::from(
+                    "INSERT OR REPLACE INTO aggregates \
+                     (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
+                     VALUES "
+                );
+                for i in 0..chunk_rows.len() {
+                    if i > 0 { sql.push(','); }
+                    sql.push_str("(?,?,?,?,?,?,?,?)");
+                }
+
+                let mut q = sqlx::query(&sql);
+                for (k, c) in chunk_rows {
+                    q = q
+                        .bind(&k.month)
+                        .bind(&k.eco_group)
+                        .bind(k.w_bucket as i64)
+                        .bind(k.b_bucket as i64)
+                        .bind(c.games as i64)
+                        .bind(c.white_wins as i64)
+                        .bind(c.black_wins as i64)
+                        .bind(c.draws as i64);
+                }
+                q.execute(&mut *tx).await?;
             }
+
             tx.commit().await?;
             vprintln!("db:upsert (sqlite) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // -------- Postgres: batch multi-row upserts --------
+        // ------------- Postgres: batched multi-row upserts -------------
         Db::Postgres(pool) => {
-            vprintln!("db:upsert (postgres) rows={}", rows.len());
+            use sqlx::{Postgres, QueryBuilder};
+
+            let chunk = cfg_chunk_size.max(1);
+            vprintln!("db:upsert (postgres) rows={} chunk={}", rows.len(), chunk);
             let t0 = std::time::Instant::now();
 
             let mut tx = pool.begin().await?;
-            // reduce fsync cost for this tx (fine for analytics loads)
             sqlx::query("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
 
-            let chunk_size = 1000usize;
-
-            for chunk in rows.chunks(chunk_size) {
-                vprintln!("db:upsert (postgres) batching {} rows", chunk.len());
-
-                use sqlx::{Postgres, QueryBuilder};
+            for chunk_rows in rows.chunks(chunk) {
+                vprintln!("db:upsert (postgres) batching {} rows", chunk_rows.len());
 
                 let mut qb = QueryBuilder::<Postgres>::new(
                     "INSERT INTO aggregates \
-                    (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
+                     (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
                 );
 
-                // IMPORTANT: do NOT push "VALUES " manually; push_values adds it.
-                qb.push_values(chunk, |mut b, (k, c)| {
+                qb.push_values(chunk_rows, |mut b, (k, c)| {
                     b.push_bind(&k.month)
                         .push_bind(&k.eco_group)
                         .push_bind(k.w_bucket as i32)
@@ -249,7 +266,6 @@ pub async fn bulk_upsert_aggregates(db: &Db, map: &AggMap) -> anyhow::Result<()>
             tx.commit().await?;
             vprintln!("db:upsert (postgres) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
-
     }
 
     Ok(())

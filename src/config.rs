@@ -2,9 +2,10 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    pub bucket_size: u16,          // ELO bucket size (default 200)
-    pub list_url: String,          // lichess list.txt
-    pub batch_size: usize,         // games per parallel batch
+    pub bucket_size: u16,
+    pub list_url: String,
+    pub batch_size: usize,
+    pub db_batch_rows: usize,
     pub rayon_threads: Option<usize>,
 }
 
@@ -14,6 +15,7 @@ impl Default for Config {
             bucket_size: 200,
             list_url: "https://database.lichess.org/standard/list.txt".to_string(),
             batch_size: 1000,
+            db_batch_rows: 1000,
             rayon_threads: None,
         }
     }

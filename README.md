@@ -1,195 +1,193 @@
-# Lichess Trends Aggregator
+# ♔♕Lichess Trends Aggregator (`lta`)
 
-A fast, streaming **Rust** tool that ingests monthly **Lichess PGN dumps** and aggregates results by:
+The **Lichess Trends Aggregator** is a fast, streaming **Rust** tool that turns the massive monthly **Lichess PGN** dumps into compact, queryable statistics. It:
 
-- **month**
-- **ECO group** (letter + tens: e.g. `B33 → B30`, missing → `U00`)
-- **White Elo bucket** (default size: **200**)
-- **Black Elo bucket** (default size: **200**)
+- fetches monthly PGN dumps from **Lichess** (or reads your local `.pgn.zst` files);
+- **streams** and decodes them on the fly (no giant temp files);
+- **aggregates** results by:
+  - **month** (e.g. `2013-07`),
+  - **ECO group** (letter + tens: e.g. `B33 → B30`; missing → `U00`),
+  - **White Elo bucket** (default size `200`),
+  - **Black Elo bucket** (default size `200`);
+- stores **counts** only: `games`, `white_wins`, `black_wins`, `draws`.
 
-For each key it stores **counts**: `games`, `white_wins`, `black_wins`, `draws`.
-
-It runs in two modes:
-
-1) **Local file mode** — read a `.pgn.zst` you already have (no temp extraction).
-2) **Remote mode** — stream monthly dumps *directly* from Lichess (no files saved).
-
-> **Default is DRY-RUN**: the app **does not** connect to any database and **does not** write anything unless you pass `--save`.
+Why this is nice 🙌:
+- You can quickly see opening trends by month and rating bands.
+- It’s designed for scale: stream → parse → aggregate in batches → optionally save to DB or CSV.
+- Default run is **safe**: it’s a **dry-run** that doesn’t touch any database unless you say so with `--save`.
 
 ---
 
 ## Requirements
+- **Docker**
+- **Docker Compose**
 
-- **Docker** and **Docker Compose**
-- Internet access (for remote mode)
-- (Optional) A Postgres DB (e.g. **Neon**) if you want to persist results remotely.  
-  Local development uses **SQLite** by default.
-
----
-
-## Quick start (TL;DR)
-
-```bash
-# 0) First build happens automatically the first time you run the script
-./dev.sh -v    # prints help and builds the debug binary
-
-# 1) DRY-RUN on the tiny example file (no DB writes)
-./dev.sh sample/lichess_sample.pgn.zst
-
-# 2) DRY-RUN streaming from Lichess (no DB writes)
-./dev.sh --remote --until 2013-02 -v
-
-# 3) Save results to local SQLite (./data/lichess.db)
-cp .env.example .env
-./dev.sh --save --remote --until 2013-02 -v
-```
-
-Open SQLite web UI (only for SQLite): <http://localhost:8080>
+That’s it! 🚀
 
 ---
 
-## How it works
+## 🚀Getting started
+A tiny sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wrapper script **`lta`** builds and runs everything inside Docker for you.
 
-- **Streaming**: remote mode uses HTTP streaming + `zstd` decode; local mode uses `zstdcat` piping.
-- **Aggregation**: parallel in-memory hashmap keyed by `(month, eco_group, white_bucket, black_bucket)`.
-- **ECO grouping**: `ECO` letter + tens (e.g., `C09 → C00`).
-- **Buckets**: Elo bucket size configurable in `config.toml` (default `200`).
-- **Database** (opt-in with `--save`):
-  - **SQLite** (local file at `./data/lichess.db`) — plus a simple web UI via `sqlite-web`.
-  - **Postgres** (e.g., Neon) — fast batched upserts with `INSERT ... VALUES (...), ... ON CONFLICT ...`.
-
----
-
-## Local file mode
-
-A small **sample PGN** is provided: `sample/lichess_sample.pgn.zst`.
-
-**Dry-run, just count games (and optional CSV):**
 ```bash
-# count only
-./dev.sh sample/lichess_sample.pgn.zst
+# Show help and build on first run
+./lta -h
 
-# count and write aggregated CSV
-./dev.sh --out out/ sample/lichess_sample.pgn.zst
-# → writes out/aggregates.csv (or per-file name if directory)
+# Run the sample (dry-run: no database writes)
+./lta sample/lichess_sample.pgn.zst
 ```
 
-**Persist to DB (requires `.env` and `--save`):**
+### Other examples
+**Remote stream from Lichess (dry-run):**
 ```bash
-cp .env.example .env             # defaults to local sqlite
-./dev.sh --save --out out/ sample/lichess_sample.pgn.zst
+# Oldest → newest, stop at (and include) 2013-02
+./lta --remote --until 2013-02 -v
 ```
 
-> Without `--save`, **no** DB connection, migrations, or writes happen.
-
----
-
-## Remote mode (Lichess)
-
-**Dry-run from Lichess (no DB):**
+**Save to local SQLite (creates ./data/lichess.db)**
 ```bash
-# Process months oldest → newest, stop at YYYY-MM (inclusive)
-./dev.sh --remote --until 2013-05 -v
-
-# Example output:
-# 2013-03 | 2.804s | games=158635
-# 2013-04 | 3.056s | games=157871
+cp .env.example .env       # defaults to local SQLite
+./lta --save --remote --until 2013-02 -v
 ```
 
-**Write monthly CSVs while still dry-run:**
+**Write aggregated CSVs (still dry-run for DB):**
 ```bash
-./dev.sh --remote --until 2013-05 --out out/ -v
-# → out/2013-03.csv, out/2013-04.csv, ...
+# One CSV per month will be written into ./out/
+./lta --remote --until 2013-02 --out out/ -v
 ```
 
-**Persist to DB (explicit opt-in with `--save`):**
-```bash
-cp .env.example .env
-./dev.sh --save --remote --until 2013-05 -v   # runs migrations and writes
-```
-
-Use a custom list index if you mirror Lichess:
-```bash
-./dev.sh --remote --list-url https://my.mirror/standard/list.txt --until 2013-05
-```
-
----
-
-## CSV output
-
-CSV columns (counts only):
+**CSV columns**
 ```
 month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws
 ```
 
-- In **remote mode**, pass `--out` with a **directory** to write **one CSV per month**.
-- In **local mode**, pass `--out` with a **file path** to write a single CSV.
+> 🔎 Tip: In **local mode**, `--out` can be a **file path** (single CSV). In **remote mode**, `--out` is usually a **directory** (one CSV per month).
 
 ---
 
-## Database setup
+## ⚙️How it works
+### 1. Streaming pipeline
+- **Remote mode**: The app streams each monthly `*.pgn.zst` over HTTP and pipes it through a **zstd** decoder. There’s no need to store the whole file on disk.
+- **Local mode**: The script uses `zstdcat` to decompress the `.zst` you already have and streams it into the app.
 
-### Local SQLite (development)
+### 2. Processing in batches
+- The PGN stream is divided into **game batches** (configurable). Each batch is parsed and aggregated in parallel (Rayon), then merged into a single in-memory map keyed by `(month, eco_group, white_bucket, black_bucket)`.
 
-1) Create `.env` from the example:
-   ```bash
-   cp .env.example .env
-   ```
-2) Run with `--save` to create tables and persist:
-   ```bash
-   ./dev.sh --save --remote --until 2013-02 -v
-   ```
-3) Optional UI: <http://localhost:8080>
+### 3. Database (optional)
+- With `--save`, results are persisted using **SQLx** either to a **local SQLite file** or to a **Postgres** database (depending on your `DATABASE_URL`). Batched upserts and transactions are used for speed.
+- Without `--save` → **no DB connections or writes**
 
-Schema (via migrations):
-- `aggregates(month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws)`
-- `ingestions(month, url, started_at, finished_at, games, duration_ms, status)`
+The following tables are created (if not already present) when saving :
+- **`aggregates`** — aggregated counts  
+  - `month` (TEXT, e.g. `YYYY-MM`)  
+  - `eco_group` (TEXT, e.g. `B20`, `C00`, `U00`)  
+  - `white_bucket` (INTEGER, lower bound, e.g. `2200`)  
+  - `black_bucket` (INTEGER, lower bound, e.g. `2000`)  
+  - `games` (INTEGER)  
+  - `white_wins` (INTEGER)  
+  - `black_wins` (INTEGER)  
+  - `draws` (INTEGER)  
+  - **PRIMARY KEY** (`month`, `eco_group`, `white_bucket`, `black_bucket`)
 
-### Remote Postgres (e.g., Neon)
+- **`ingestions`** — tracks processed months (only in remote mode, see below)
+  - `month` (TEXT, PRIMARY KEY)  
+  - `url` (TEXT)  
+  - `started_at` (TEXT, ISO8601)  
+  - `finished_at` (TEXT, ISO8601)  
+  - `games` (INTEGER, default 0)  
+  - `duration_ms` (INTEGER, default 0)  
+  - `status` (TEXT: `started` | `success` | `failed`)
 
-1) Create a database (Neon free tier is fine for testing).
-2) Put your URL in `.env`:
-   ```ini
-   DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
-   DB_MAX_CONNECTIONS=10
-   ```
-3) Run with `--save` to run migrations and write:
-   ```bash
-   ./dev.sh --save --remote --until 2013-05 -v
-   ```
+- **`_sqlx_migrations`** — internal table used by SQLx to record executed migrations
 
-> Batched upserts are enabled for Postgres, so remote writes are fast.  
-> Dry-run (`--save` omitted) avoids DB entirely.
+You can reset your local SQLite to start fresh :
+```bash
+rm -f data/lichess.db data/lichess.db-wal data/lichess.db-shm
+```
+---
+
+## 🗂️Local mode (details)
+Use a local `.pgn.zst` file you already have (no extraction needed).
+
+```bash
+# Count games (dry-run)
+./lta path/to/lichess_db_standard_rated_2013-07.pgn.zst
+
+# Count and write a single CSV
+./lta --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
+
+# Persist counts to local SQLite
+cp .env.example .env
+./lta --save --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
+```
+
+What you’ll see in the terminal:
+- per-file timing + number of games processed;
+- optional “wrote CSV” message if `--out` is set.
 
 ---
 
-## Configuration
+## 🌐Remote mode (Lichess)
+The app reads `list.txt` from Lichess (a list of monthly URLs), sorts **oldest → newest**, and processes month after month.
 
-Edit `config.toml` to tune defaults:
+```bash
+# Dry-run up to a given month
+./lta --remote --until 2013-05 -v
+
+# Dry-run with CSVs (one file per month)
+./lta --remote --until 2013-05 --out out/ -v
+
+# Persist results into your configured database (requires .env with DATABASE_URL)
+./lta --remote --until 2013-05 --save -v
+
+# Use a custom index (if you mirror Lichess)
+./lta --remote --list-url https://my.mirror/standard/list.txt --until 2013-05
+```
+
+What you’ll see:
+- per-month timing + number of games processed;
+- optional CSV write messages if `--out` is set.
+- with `--save`, results are written to the DB and each processed month is kept track of in the ingestions table.
+
+---
+
+## 🗄️Remote database setup (Postgres)
+You can push results into a remote **Postgres** database. Create a `.env` file, then run with `--save`.
+
+1) Create `.env` (mock URL example shown):
+```ini
+# .env
+DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
+DB_MAX_CONNECTIONS=10
+```
+
+2) Save results to Postgres:
+```bash
+./lta --save --remote --until 2013-05 -v
+```
+
+---
+
+## 🛠️Configuration (`config.toml`)
+All knobs live in `config.toml`:
 
 ```toml
-bucket_size = 200                     # Elo bucket size
-list_url    = "https://database.lichess.org/standard/list.txt"
-batch_size  = 1000                    # games per parallel batch
-# rayon_threads = 8                   # pin Rayon threads; default = CPU count
+bucket_size   = 200   # Elo bucket size for white/black buckets
+list_url      = "https://database.lichess.org/standard/list.txt"
+batch_size    = 1000  # games per aggregation batch (Rayon)
+db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
+# rayon_threads = 8   # pin Rayon threads; default = CPU count
 ```
 
-Environment variables (via `.env`):
-
-```ini
-# Local development: SQLite database in ./data/lichess.db
-DATABASE_URL=sqlite:///data/lichess.db
-DB_MAX_CONNECTIONS=10
-
-# Example Postgres (Neon):
-# DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
-# DB_MAX_CONNECTIONS=10
-```
+- **bucket_size**: Elo bucket width (e.g., 200 → 1200–1399, 1400–1599, …).
+- **list_url**: the Lichess monthly index; change if you mirror it.
+- **batch_size**: number of games processed at a time before merging.
+- **db_batch_rows**: how many rows are inserted/updated per DB batch.
+- **rayon_threads**: set to force a specific parallelism; otherwise uses CPU count.
 
 ---
 
-## CLI reference
-
+## 💻CLI reference
 ```
 # Default is DRY-RUN: no DB connection and no writes.
 
@@ -207,16 +205,10 @@ DB_MAX_CONNECTIONS=10
 
 ---
 
-## Troubleshooting
-
-- **No extra logs with -v**: the script rebuilds the binary every run; if you changed code, run again with `-v`.
-- **“syntax error at/near VALUES”** on Postgres: ensure you’ve pulled the version with **batched upserts**.
-- **Container not running**: `./dev.sh` auto-starts `dev` and `dbui`, or run `docker compose up -d dev dbui`.
-- **Slow Postgres writes**: batching is enabled; if still slow, verify network latency to your DB region.
-- **Dry-run confusion**: remember `--save` is required to touch any DB.
+## 📜License
+This project is licensed under the terms of the MIT license.
 
 ---
 
-## License
-
-MIT
+## 🤝Contribution
+We welcome contributions! 💡 Issues, PRs, and ideas are all appreciated.

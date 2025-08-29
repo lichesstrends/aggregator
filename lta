@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_FILE="sample/lichess_sample.pgn.zst"
+BIN="/app/target/debug/aggregator"
+CARGO="/usr/local/cargo/bin/cargo"
+
+REMOTE=0
+UNTIL=""
+OUT_HOST="${OUT:-}"
+FILES=()
+LIST_URL=""
+VERBOSE=0
+SAVE=0
+
+usage() {
+  cat <<'EOF'
+Lichess Trends Aggregator (wrapper)
+
+Usage:
+  Local file(s):
+    lta [--out agg.csv] [file1.zst [file2.zst ...]] [--save] [-v]
+
+  Remote ingest (stream from Lichess, no files saved):
+    lta --remote [--until YYYY-MM] [--out OUT] [--list-url URL] [--save] [-v]
+
+Options:
+  --remote                  Stream monthly dumps (oldest -> newest)
+  --until YYYY-MM           Stop after this month (inclusive)
+  --out, -o PATH            CSV output (dir = one CSV per month)
+  --list-url URL            Override list.txt endpoint
+  --save                    Persist to DB (migrations + writes). Default: DRY-RUN
+  -v, --verbose             Detailed timings/logs
+  -h, --help                This help
+
+Notes:
+  - Dry-run by default: no DB connection/writes.
+  - Local SQLite file persists in ./data/lichess.db (only used if you pass --save)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --remote|--ingest-remote) REMOTE=1; shift ;;
+    --until)  UNTIL="${2:-}"; shift 2 ;;
+    --out|-o) OUT_HOST="${2:-}"; shift 2 ;;
+    --list-url) LIST_URL="${2:-}"; shift 2 ;;
+    --save) SAVE=1; shift ;;
+    -v|--verbose) VERBOSE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+    *)  FILES+=("$1"); shift ;;
+  esac
+done
+
+if [[ $REMOTE -eq 0 && ${#FILES[@]} -eq 0 ]]; then
+  FILES=("${LICHESS_FILE:-$DEFAULT_FILE}")
+fi
+
+mkdir -p data
+docker compose up -d dev >/dev/null
+# (dbui not started automatically anymore)
+docker compose exec -T dev bash -lc "$CARGO build -q"
+
+OUT_CONTAINER=""
+if [[ -n "$OUT_HOST" ]]; then
+  [[ "$OUT_HOST" == /app/* ]] && OUT_HOST="${OUT_HOST#/app/}"
+  mkdir -p "$(dirname "$OUT_HOST")"
+  if [[ "$OUT_HOST" == */ || "$OUT_HOST" != *.* ]]; then
+    mkdir -p "$OUT_HOST"
+  fi
+  OUT_CONTAINER="/app/$OUT_HOST"
+fi
+
+if [[ $REMOTE -eq 1 ]]; then
+  APP_ARGS=(--remote)
+  [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
+  [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
+  [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
+  [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=("-v")
+  [[ $SAVE -eq 1 ]]         && APP_ARGS+=("--save")
+
+  echo "▶️  Remote ingest starting..."
+  docker compose exec -T dev bash -lc "'$BIN' ${APP_ARGS[*]}"
+  echo "✅ Remote ingest completed."
+  exit 0
+fi
+
+# --- Local files ---
+echo "▶️  Local ingest starting..."
+BIN_FLAGS=()
+[[ $VERBOSE -eq 1 ]] && BIN_FLAGS+=("-v")
+[[ $SAVE -eq 1 ]] && BIN_FLAGS+=("--save")
+
+for FILE in "${FILES[@]}"; do
+  if [[ ! -f "$FILE" ]]; then
+    echo "❌ PGN file not found: $FILE" >&2
+    continue
+  fi
+
+  start_ms=$(date +%s%3N)
+
+  if [[ -n "$OUT_CONTAINER" ]]; then
+    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]} --out '$OUT_CONTAINER'"
+  else
+    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]}"
+  fi
+
+  games=$(docker compose exec -T dev bash -lc "$cmd")
+
+  end_ms=$(date +%s%3N)
+  elapsed_ms=$((end_ms - start_ms))
+  elapsed_s=$(awk "BEGIN { printf \"%.3f\", ${elapsed_ms}/1000 }")
+
+  echo "$(basename "$FILE") | ${elapsed_s}s | games=${games}"
+
+  if [[ -n "$OUT_CONTAINER" ]]; then
+    if [[ -f "$OUT_HOST" ]]; then
+      size=$(du -h "$OUT_HOST" | awk '{print $1}')
+      echo "📄 Wrote CSV: $OUT_HOST (${size})"
+    else
+      echo "⚠️  Expected CSV not found at $OUT_HOST" >&2
+    fi
+  fi
+done
+
+echo "✅ Local ingest completed."

@@ -45,7 +45,6 @@ async fn main() -> std::io::Result<()> {
 
             if plan.is_empty() {
                 eprintln!("Nothing to ingest (already up to date).");
-                println!("0");
                 return Ok(());
             }
 
@@ -62,7 +61,7 @@ async fn main() -> std::io::Result<()> {
                         .await
                         .expect("stream+aggregate failed");
 
-                db::bulk_upsert_aggregates(&dbh, &map)
+                db::bulk_upsert_aggregates(&dbh, &map, cfg.db_batch_rows)
                     .await
                     .expect("DB bulk upsert failed");
 
@@ -75,7 +74,6 @@ async fn main() -> std::io::Result<()> {
 
                 eprintln!("{} | {:.3}s | games={}", item.month, (dur_ms as f64)/1000.0, games);
             }
-            println!("0");
             return Ok(());
         } else {
             // DRY-RUN remote: no DB touches at all
@@ -86,7 +84,6 @@ async fn main() -> std::io::Result<()> {
             vprintln!("remote (dry-run): items = {}", plan.len());
 
             if plan.is_empty() {
-                println!("0");
                 return Ok(());
             }
 
@@ -99,7 +96,6 @@ async fn main() -> std::io::Result<()> {
 
                 eprintln!("{} | {:.3}s | games={}", item.month, (dur_ms as f64)/1000.0, games);
             }
-            println!("0");
             return Ok(());
         }
     }
@@ -112,7 +108,7 @@ async fn main() -> std::io::Result<()> {
 
         let (map, total_games) =
             aggregator::aggregate_from_reader(std::io::BufReader::new(std::io::stdin().lock()), &cfg)?;
-        db::bulk_upsert_aggregates(&dbh, &map).await.expect("DB bulk upsert failed");
+        db::bulk_upsert_aggregates(&dbh, &map, cfg.db_batch_rows).await.expect("DB bulk upsert failed");
         if let Some(out) = args.out.as_deref() {
             aggregator::write_csv(&map, Path::new(out)).expect("CSV write failed");
         }

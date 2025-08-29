@@ -1,4 +1,7 @@
 bucket_size = 200
 list_url    = "https://database.lichess.org/standard/list.txt"
-batch_size  = 1000
+db_batch_rows = 1000
+
+# rayon setup
+batch_size  = 1000   # games per aggregation batch
 # rayon_threads = 8  # uncomment to pin Rayon threads; otherwise uses CPU count
