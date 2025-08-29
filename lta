@@ -15,7 +15,7 @@ SAVE=0
 
 usage() {
   cat <<'EOF'
-Lichess Trends Aggregator (wrapper)
+LichessTrends Aggregator (wrapper)
 
 Usage:
   Local file(s):
