@@ -28,11 +28,12 @@ async fn main() -> std::io::Result<()> {
         let _ = rayon::ThreadPoolBuilder::new().num_threads(n).build_global();
     }
 
-    // list_url is only defined in config; CLI can override it with --list-url
+    // list_url lives in config; CLI --list-url can override
     let list_url = if args.list_url.is_empty() { cfg.list_url.clone() } else { args.list_url.clone() };
 
     // --- REMOTE MODE ---
     if args.ingest_remote {
+        eprintln!("➡️ Remote ingest starting...");
         if args.save {
             // save: DB on, migrations, skip already ingested, upsert
             let dbh = db::connect_from_env().await.expect("DB connect failed");
@@ -45,10 +46,11 @@ async fn main() -> std::io::Result<()> {
             vprintln!("remote: plan size after filters = {}", plan.len());
 
             if plan.is_empty() {
-                eprintln!("Nothing to ingest (already up to date).");
+                eprintln!("ℹ️ No remote files were processed.");
                 return Ok(());
             }
 
+            let mut processed = 0usize;
             for item in plan {
                 let start_iso = Utc::now().to_rfc3339();
                 db::mark_ingestion_start(&dbh, &item.month, &item.url, &start_iso)
@@ -74,7 +76,10 @@ async fn main() -> std::io::Result<()> {
                 .expect("mark finish failed");
 
                 eprintln!("{} | {:.3}s | games={}", item.month, (dur_ms as f64)/1000.0, games);
+                processed += 1;
             }
+
+            eprintln!("✅ Remote ingest completed ({} month{}).", processed, if processed==1 {""} else {"s"});
             return Ok(());
         } else {
             // DRY-RUN remote: no DB touches at all
@@ -85,9 +90,11 @@ async fn main() -> std::io::Result<()> {
             vprintln!("remote (dry-run): items = {}", plan.len());
 
             if plan.is_empty() {
+                eprintln!("ℹ️ No remote files were processed.");
                 return Ok(());
             }
 
+            let mut processed = 0usize;
             for item in plan {
                 let out_csv = make_monthly_out_path(args.out.as_deref(), &item.month);
                 let (_map, games, dur_ms) =
@@ -96,12 +103,16 @@ async fn main() -> std::io::Result<()> {
                         .expect("stream+aggregate failed (dry-run)");
 
                 eprintln!("{} | {:.3}s | games={}", item.month, (dur_ms as f64)/1000.0, games);
+                processed += 1;
             }
+
+            eprintln!("✅ Remote ingest completed ({} month{}).", processed, if processed==1 {""} else {"s"});
             return Ok(());
         }
     }
 
     // --- LOCAL (stdin) MODE ---
+    eprintln!("➡️ Local ingest starting...");
     if args.save {
         // connect + upsert
         let dbh = db::connect_from_env().await.expect("DB connect failed");
@@ -114,6 +125,7 @@ async fn main() -> std::io::Result<()> {
             aggregator::write_csv(&map, Path::new(out)).expect("CSV write failed");
         }
         println!("{}", total_games);
+        eprintln!("✅ Local ingest completed.");
         return Ok(());
     } else {
         // dry-run: just count + optional CSV
@@ -123,6 +135,7 @@ async fn main() -> std::io::Result<()> {
             aggregator::write_csv(&map, Path::new(out)).expect("CSV write failed");
         }
         println!("{}", total_games);
+        eprintln!("✅ Local ingest completed.");
         return Ok(());
     }
 }

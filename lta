@@ -13,7 +13,6 @@ FILES=()
 LIST_URL=""
 VERBOSE=0
 SAVE=0
-PROCESSED_ANY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,7 +24,6 @@ while [[ $# -gt 0 ]]; do
     --save) SAVE=1; shift ;;
     -v|--verbose) VERBOSE=1; shift ;;
     -h|--help)
-      # forward to the app's help (single source of truth)
       mkdir -p data
       docker compose up -d dev >/dev/null
       docker compose exec -T dev bash -lc "$CARGO build -q"
@@ -46,6 +44,7 @@ mkdir -p data
 docker compose up -d dev >/dev/null
 docker compose exec -T dev bash -lc "$CARGO build -q"
 
+# Normalize OUT path and create dirs on host
 OUT_CONTAINER=""
 if [[ -n "$OUT_HOST" ]]; then
   [[ "$OUT_HOST" == /app/* ]] && OUT_HOST="${OUT_HOST#/app/}"
@@ -57,25 +56,30 @@ if [[ -n "$OUT_HOST" ]]; then
 fi
 
 if [[ $REMOTE -eq 1 ]]; then
+  # Build args array for the Rust binary
   APP_ARGS=(--remote)
   [[ -n "$SINCE" ]]         && APP_ARGS+=(--since "$SINCE")
   [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
   [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
   [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
-  [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=("-v")
-  [[ $SAVE -eq 1 ]]         && APP_ARGS+=("--save")
+  [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=(-v)
+  [[ $SAVE -eq 1 ]]         && APP_ARGS+=(--save)
 
-  echo "▶️  Remote ingest starting..."
-  docker compose exec -T dev bash -lc "'$BIN' ${APP_ARGS[*]}"
-  echo "✅ Remote ingest completed."
+  # Compose a shell-safe command for bash -lc
+  cmd="'$BIN'"
+  for a in "${APP_ARGS[@]}"; do
+    cmd+=" $(printf '%q' "$a")"
+  done
+
+  docker compose exec -T dev bash -lc "$cmd"
   exit 0
 fi
 
 # --- Local files ---
-echo "▶️  Local ingest starting..."
 BIN_FLAGS=()
-[[ $VERBOSE -eq 1 ]] && BIN_FLAGS+=("-v")
-[[ $SAVE -eq 1 ]] && BIN_FLAGS+=("--save")
+[[ $VERBOSE -eq 1 ]] && BIN_FLAGS+=(-v)
+[[ $SAVE -eq 1 ]] && BIN_FLAGS+=(--save)
+[[ -n "$OUT_CONTAINER" ]] && BIN_FLAGS+=(--out "$OUT_CONTAINER")
 
 for FILE in "${FILES[@]}"; do
   if [[ ! -f "$FILE" ]]; then
@@ -83,35 +87,11 @@ for FILE in "${FILES[@]}"; do
     continue
   fi
 
-  start_ms=$(date +%s%3N)
+  # zstdcat file → aggregator [flags]
+  cmd="zstdcat $(printf '%q' "/app/$FILE") | '$BIN'"
+  for a in "${BIN_FLAGS[@]}"; do
+    cmd+=" $(printf '%q' "$a")"
+  done
 
-  if [[ -n "$OUT_CONTAINER" ]]; then
-    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]} --out '$OUT_CONTAINER'"
-  else
-    cmd="zstdcat '/app/$FILE' | '$BIN' ${BIN_FLAGS[*]}"
-  fi
-
-  games=$(docker compose exec -T dev bash -lc "$cmd")
-  PROCESSED_ANY=1
-
-  end_ms=$(date +%s%3N)
-  elapsed_ms=$((end_ms - start_ms))
-  elapsed_s=$(awk "BEGIN { printf \"%.3f\", ${elapsed_ms}/1000 }")
-
-  echo "$(basename "$FILE") | ${elapsed_s}s | games=${games}"
-
-  if [[ -n "$OUT_CONTAINER" ]]; then
-    if [[ -f "$OUT_HOST" ]]; then
-      size=$(du -h "$OUT_HOST" | awk '{print $1}')
-      echo "📄 Wrote CSV: $OUT_HOST (${size})"
-    else
-      echo "⚠️  Expected CSV not found at $OUT_HOST" >&2
-    fi
-  fi
+  docker compose exec -T dev bash -lc "$cmd"
 done
-
-if [[ $PROCESSED_ANY -eq 1 ]]; then
-  echo "✅ Local ingest completed."
-else
-  echo "ℹ️  No local files were processed."
-fi
