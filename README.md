@@ -79,7 +79,7 @@ Here is an example row:
 - The PGN stream is divided into **game batches** (configurable). Each batch is parsed and aggregated in parallel (Rayon), then merged into a single in-memory map keyed by `(month, eco_group, white_bucket, black_bucket)`.
 
 ### 3. Database (optional)
-- With `--save`, results are persisted using **SQLx** either to a **local SQLite file** or to a **Postgres** database (depending on your `DATABASE_URL`). Batched upserts and transactions are used for speed.
+- With `--save`, results are persisted using **SQLx** either to a **local SQLite file** or to a remote database depending on your `DATABASE_URL` (**Postgres** and **MySQL** are supported). Batched upserts and transactions are used for speed.
 - Without `--save` → **no DB connections or writes**
 
 The following tables are created (if not already present) when saving:
@@ -151,8 +151,8 @@ What you’ll see:
 - optional CSV write messages if `--out` is set.
 - with `--save`, results are written to the DB and each processed month is kept track of in the ingestions table.
 
-## 🗄️Remote database setup (Postgres)
-You can push results into a remote **Postgres** database. Create a `.env` file, then run with `--save`.
+## 🗄️Remote database setup
+You can push results into a remote database (**Postgres** and **MySQL** are supported). Create a `.env` file, then run with `--save`.
 
 1) Create `.env` (mock URL example shown):
 ```ini
@@ -161,7 +161,7 @@ DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
 DB_MAX_CONNECTIONS=10
 ```
 
-2) Save results to Postgres:
+2) Save results to your remote database with the `--save` CLI option :
 ```bash
 ./lta --save --remote --until 2013-05 -v
 ```
@@ -172,7 +172,7 @@ All knobs live in `config.toml`:
 ```toml
 bucket_size = 200     # Elo bucket size for white/black buckets
 list_url    = "https://database.lichess.org/standard/list.txt"
-db_batch_rows = 1000  # rows per DB upsert batch (used for SQLite & Postgres)
+db_batch_rows = 1000  # rows per DB upsert batch
 
 # Rayon setup
 batch_size  = 1000   # games per aggregation batch

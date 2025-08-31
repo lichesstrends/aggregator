@@ -2,18 +2,20 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use anyhow::Context;
-use sqlx::{PgPool, SqlitePool};
+use sqlx::{PgPool, SqlitePool, MySqlPool};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::mysql::MySqlPoolOptions;
 
 use crate::aggregator::AggMap;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Backend { Sqlite, Postgres }
+pub enum Backend { Sqlite, Postgres, Mysql }
 
 pub enum Db {
     Sqlite(SqlitePool),
     Postgres(PgPool),
+    Mysql(MySqlPool),
 }
 
 fn env_var(name: &str, default: &str) -> String {
@@ -26,6 +28,8 @@ fn detect_backend_from_url(url: &str) -> anyhow::Result<Backend> {
         Ok(Backend::Postgres)
     } else if lower.starts_with("sqlite:") {
         Ok(Backend::Sqlite)
+    } else if lower.starts_with("mysql://") {
+        Ok(Backend::Mysql)
     } else {
         anyhow::bail!("Unsupported DATABASE_URL scheme: {}", url);
     }
@@ -58,6 +62,14 @@ pub async fn connect_from_env() -> anyhow::Result<Db> {
                 .with_context(|| "connecting to Postgres")?;
             Db::Postgres(pool)
         }
+        Backend::Mysql => {
+            let pool = MySqlPoolOptions::new()
+                .max_connections(max)
+                .connect(&url)
+                .await
+                .with_context(|| "connecting to MySQL/TiDB")?;
+            Db::Mysql(pool)
+        }
     };
     vprintln!("db: connected in {:.3}s", t0.elapsed().as_secs_f64());
     Ok(db)
@@ -77,6 +89,10 @@ pub async fn run_migrations(db: &Db) -> anyhow::Result<()> {
             let _ = sqlx::query("SELECT pg_advisory_unlock($1)").bind(lock_key).execute(&mut *conn).await;
             res?;
         }
+        Db::Mysql(pool) => {
+            // TiDB/MySQL: just run migrations
+            sqlx::migrate!("./migrations").run(pool).await?;
+        }
     }
     vprintln!("db:migrate: done in {:.3}s", t0.elapsed().as_secs_f64());
     Ok(())
@@ -93,6 +109,13 @@ pub async fn already_ingested_months(db: &Db) -> anyhow::Result<HashSet<String>>
             .await?
         }
         Db::Postgres(pool) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT month FROM ingestions WHERE status = 'success'"
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Db::Mysql(pool) => {
             sqlx::query_scalar::<_, String>(
                 "SELECT month FROM ingestions WHERE status = 'success'"
             )
@@ -133,6 +156,18 @@ pub async fn mark_ingestion_start(
             .bind(month).bind(url).bind(started_iso)
             .execute(pool).await?;
         }
+        Db::Mysql(pool) => {
+            sqlx::query(
+                "INSERT INTO ingestions (month, url, started_at, status)
+                 VALUES (?, ?, ?, 'started')
+                 ON DUPLICATE KEY UPDATE
+                   url = VALUES(url),
+                   started_at = VALUES(started_at),
+                   status = 'started'"
+            )
+            .bind(month).bind(url).bind(started_iso)
+            .execute(pool).await?;
+        }
     }
     Ok(())
 }
@@ -160,6 +195,15 @@ pub async fn mark_ingestion_finish(
             .bind(month).bind(games).bind(duration_ms).bind(status).bind(finished_iso)
             .execute(pool).await?;
         }
+        Db::Mysql(pool) => {
+            sqlx::query(
+                "UPDATE ingestions
+                   SET games = ?, duration_ms = ?, status = ?, finished_at = ?
+                 WHERE month = ?"
+            )
+            .bind(games).bind(duration_ms).bind(status).bind(finished_iso).bind(month)
+            .execute(pool).await?;
+        }
     }
     Ok(())
 }
@@ -185,14 +229,13 @@ pub async fn bulk_upsert_aggregates(
         Db::Sqlite(pool) => {
             // 8 params per row; SQLite default param limit ~999 → 999/8 ~= 124
             let max_sqlite_rows = 120usize;
-            let chunk = cfg_chunk_size.min(max_sqlite_rows);
+            let chunk = cfg_chunk_size.min(max_sqlite_rows).max(1);
 
             vprintln!("db:upsert (sqlite) rows={} chunk={}", rows.len(), chunk);
             let t0 = std::time::Instant::now();
             let mut tx = pool.begin().await?;
 
             for chunk_rows in rows.chunks(chunk) {
-                // Build: INSERT OR REPLACE ... VALUES (?,?,?,?,?,?,?,?),(?,?,?,?,?,?,?,?)...
                 let mut sql = String::from(
                     "INSERT OR REPLACE INTO aggregates \
                      (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
@@ -231,6 +274,7 @@ pub async fn bulk_upsert_aggregates(
             let t0 = std::time::Instant::now();
 
             let mut tx = pool.begin().await?;
+            // Faster commits; safe for idempotent upserts
             sqlx::query("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
 
             for chunk_rows in rows.chunks(chunk) {
@@ -265,6 +309,51 @@ pub async fn bulk_upsert_aggregates(
 
             tx.commit().await?;
             vprintln!("db:upsert (postgres) done in {:.3}s", t0.elapsed().as_secs_f64());
+        }
+
+        // ------------- MySQL/TiDB: batched multi-row upserts -------------
+        Db::Mysql(pool) => {
+            use sqlx::{MySql, QueryBuilder};
+
+            let chunk = cfg_chunk_size.max(1);
+            vprintln!("db:upsert (mysql) rows={} chunk={}", rows.len(), chunk);
+            let t0 = std::time::Instant::now();
+
+            let mut tx = pool.begin().await?;
+
+            for chunk_rows in rows.chunks(chunk) {
+                vprintln!("db:upsert (mysql) batching {} rows", chunk_rows.len());
+
+                let mut qb = QueryBuilder::<MySql>::new(
+                    "INSERT INTO aggregates \
+                     (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
+                );
+
+                qb.push_values(chunk_rows, |mut b, (k, c)| {
+                    b.push_bind(&k.month)
+                        .push_bind(&k.eco_group)
+                        .push_bind(k.w_bucket as i32)
+                        .push_bind(k.b_bucket as i32)
+                        .push_bind(c.games as i64)
+                        .push_bind(c.white_wins as i64)
+                        .push_bind(c.black_wins as i64)
+                        .push_bind(c.draws as i64);
+                });
+
+                // TiDB/MySQL upsert
+                qb.push(
+                    " ON DUPLICATE KEY UPDATE \
+                      games = VALUES(games), \
+                      white_wins = VALUES(white_wins), \
+                      black_wins = VALUES(black_wins), \
+                      draws = VALUES(draws)"
+                );
+
+                qb.build().execute(&mut *tx).await?;
+            }
+
+            tx.commit().await?;
+            vprintln!("db:upsert (mysql) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
     }
 

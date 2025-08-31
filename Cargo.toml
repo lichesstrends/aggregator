@@ -8,6 +8,7 @@ tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
 sqlx  = { version = "0.7", features = [
   "sqlite",                # SQLite driver
   "postgres",              # Postgres driver
+  "mysql",
   "runtime-tokio-rustls",  # TLS without OpenSSL
   "macros",
   "migrate"                # (optional) but nice since you use migrations
