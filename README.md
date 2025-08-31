@@ -6,7 +6,7 @@ The **LichessTrends Aggregator** is a fast, streaming **Rust** tool that turns t
 - **streams** and decodes them on the fly (no giant temp files);
 - **aggregates** results by:
   - **month** (e.g. `2013-07`),
-  - **ECO group** (letter + tens: e.g. `B33 → B30`; missing → `U00`),
+  - **ECO codes group** (e.g. `B20-B99`→ Sicilian defence; `A56`→ Benoni defence),
   - **White Elo bucket** (default size `200`),
   - **Black Elo bucket** (default size `200`);
 - stores **counts** only: `games`, `white_wins`, `black_wins`, `draws`.
@@ -64,10 +64,10 @@ month,eco_group,white_bucket,black_bucket,games,white_wins,black_wins,draws
 
 Here is an example row:
 ```
-2013-05,C00,1600,1400,523,280,180,63
+2013-05,C00-C19,1600,1400,523,280,180,63
 ```
 
-> 💡 This means: In **May 2013** on Lichess, for games in the **C00 ECO group** (French Defence family) where **White was rated in the 1600–1799 bucket** and **Black in the 1400–1599 bucket**, there were a total of **523 games**. Out of these, **White won 280**, **Black won 180**, and **63 were draws**.
+> 💡 This means: In **May 2013** on Lichess, for games in the **C00-C19 ECO group** (French Defence family) where **White was rated in the 1600–1799 bucket** and **Black in the 1400–1599 bucket**, there were a total of **523 games**. Out of these, **White won 280**, **Black won 180**, and **63 were draws**.
 
 
 ## ⚙️How it works
@@ -85,7 +85,7 @@ Here is an example row:
 The following tables are created (if not already present) when saving:
 - **`aggregates`** — aggregated counts  
   - `month` (TEXT, e.g. `YYYY-MM`)  
-  - `eco_group` (TEXT, e.g. `B20`, `C00`, `U00`)  
+  - `eco_group` (TEXT, e.g. `B20-B99`, `C00-C19`)  
   - `white_bucket` (INTEGER, lower bound, e.g. `2200`)  
   - `black_bucket` (INTEGER, lower bound, e.g. `2000`)  
   - `games` (INTEGER)  

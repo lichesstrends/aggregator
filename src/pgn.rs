@@ -39,15 +39,10 @@ pub fn month_from_headers(h: &HashMap<String, String>) -> String {
     "unknown".to_string()
 }
 
-/// ECO group: letter + tens (e.g., B33 -> B30, C09 -> C00). Missing -> U00.
-pub fn eco_group_from_headers(h: &HashMap<String, String>) -> String {
+pub fn eco_group_from_headers(h: &std::collections::HashMap<String, String>) -> String {
     if let Some(eco) = h.get("ECO") {
-        let s = eco.trim();
-        let bytes = s.as_bytes();
-        if bytes.len() == 3 && (b'A'..=b'E').contains(&bytes[0]) && bytes[1].is_ascii_digit() && bytes[2].is_ascii_digit() {
-            let tens = ((bytes[1] - b'0') * 10 + (bytes[2] - b'0')) / 10 * 10;
-            return format!("{}{:02}", s.chars().next().unwrap(), tens);
-        }
+        // Map specific ECO (e.g., "B45") to a natural group label (e.g., "B20-B99")
+        return crate::eco::label_for_code(eco).to_string();
     }
     "U00".to_string()
 }

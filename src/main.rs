@@ -8,6 +8,7 @@ mod config;
 mod db;
 mod model;
 mod pgn;
+mod eco;
 mod remote;
 
 use std::path::{Path, PathBuf};
