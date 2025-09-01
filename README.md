@@ -84,24 +84,24 @@ Here is an example row:
 
 The following tables are created (if not already present) when saving:
 - **`aggregates`** — aggregated counts  
-  - `month` (TEXT, e.g. `YYYY-MM`)  
-  - `eco_group` (TEXT, e.g. `B20-B99`, `C00-C19`)  
+  - `month` (VARCHAR(7), e.g. `YYYY-MM`)  
+  - `eco_group` (VARCHAR(16), e.g. `B20-B99`, `C00-C19`)  
   - `white_bucket` (INTEGER, lower bound, e.g. `2200`)  
   - `black_bucket` (INTEGER, lower bound, e.g. `2000`)  
-  - `games` (INTEGER)  
-  - `white_wins` (INTEGER)  
-  - `black_wins` (INTEGER)  
-  - `draws` (INTEGER)  
+  - `games` (BIGINT)  
+  - `white_wins` (BIGINT)  
+  - `black_wins` (BIGINT)  
+  - `draws` (BIGINT)  
   - **PRIMARY KEY** (`month`, `eco_group`, `white_bucket`, `black_bucket`)
 
 - **`ingestions`** — tracks processed months (only in remote mode, see below)
-  - `month` (TEXT, PRIMARY KEY)  
+  - `month` (VARCHAR(7), PRIMARY KEY)  
   - `url` (TEXT)  
   - `started_at` (TEXT, ISO8601)  
   - `finished_at` (TEXT, ISO8601)  
-  - `games` (INTEGER, default 0)  
-  - `duration_ms` (INTEGER, default 0)  
-  - `status` (TEXT: `started` | `success` | `failed`)
+  - `games` (BIGINT, default 0)  
+  - `duration_ms` (BIGINT, default 0)  
+  - `status` (VARCHAR(16): `started` | `success` | `failed`)
 
 - **`_sqlx_migrations`** — internal table used by SQLx to record executed migrations
 
