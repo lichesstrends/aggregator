@@ -90,7 +90,6 @@ pub async fn run_migrations(db: &Db) -> anyhow::Result<()> {
             res?;
         }
         Db::Mysql(pool) => {
-            // TiDB/MySQL: just run migrations
             sqlx::migrate!("./migrations").run(pool).await?;
         }
     }
@@ -225,7 +224,7 @@ pub async fn bulk_upsert_aggregates(
     });
 
     match db {
-        // ------------- SQLite: batched VALUES lists -------------
+        // ------------- SQLite: batched upsert with accumulation -------------
         Db::Sqlite(pool) => {
             // 8 params per row; SQLite default param limit ~999 → 999/8 ~= 124
             let max_sqlite_rows = 120usize;
@@ -236,8 +235,9 @@ pub async fn bulk_upsert_aggregates(
             let mut tx = pool.begin().await?;
 
             for chunk_rows in rows.chunks(chunk) {
+                // INSERT ... ON CONFLICT (...) DO UPDATE SET col = col + excluded.col
                 let mut sql = String::from(
-                    "INSERT OR REPLACE INTO aggregates \
+                    "INSERT INTO aggregates \
                      (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
                      VALUES "
                 );
@@ -245,6 +245,13 @@ pub async fn bulk_upsert_aggregates(
                     if i > 0 { sql.push(','); }
                     sql.push_str("(?,?,?,?,?,?,?,?)");
                 }
+                sql.push_str(
+                    " ON CONFLICT (month, eco_group, white_bucket, black_bucket) DO UPDATE SET \
+                      games = aggregates.games + excluded.games, \
+                      white_wins = aggregates.white_wins + excluded.white_wins, \
+                      black_wins = aggregates.black_wins + excluded.black_wins, \
+                      draws = aggregates.draws + excluded.draws"
+                );
 
                 let mut q = sqlx::query(&sql);
                 for (k, c) in chunk_rows {
@@ -265,7 +272,7 @@ pub async fn bulk_upsert_aggregates(
             vprintln!("db:upsert (sqlite) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // ------------- Postgres: batched multi-row upserts -------------
+        // ------------- Postgres: accumulate using EXCLUDED + target table -------------
         Db::Postgres(pool) => {
             use sqlx::{Postgres, QueryBuilder};
 
@@ -274,7 +281,7 @@ pub async fn bulk_upsert_aggregates(
             let t0 = std::time::Instant::now();
 
             let mut tx = pool.begin().await?;
-            // Faster commits; safe for idempotent upserts
+            // safe for idempotent “additive” upserts
             sqlx::query("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
 
             for chunk_rows in rows.chunks(chunk) {
@@ -298,10 +305,10 @@ pub async fn bulk_upsert_aggregates(
 
                 qb.push(
                     " ON CONFLICT (month, eco_group, white_bucket, black_bucket) DO UPDATE SET \
-                      games = EXCLUDED.games, \
-                      white_wins = EXCLUDED.white_wins, \
-                      black_wins = EXCLUDED.black_wins, \
-                      draws = EXCLUDED.draws"
+                      games = aggregates.games + EXCLUDED.games, \
+                      white_wins = aggregates.white_wins + EXCLUDED.white_wins, \
+                      black_wins = aggregates.black_wins + EXCLUDED.black_wins, \
+                      draws = aggregates.draws + EXCLUDED.draws"
                 );
 
                 qb.build().execute(&mut *tx).await?;
@@ -311,7 +318,7 @@ pub async fn bulk_upsert_aggregates(
             vprintln!("db:upsert (postgres) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // ------------- MySQL/TiDB: batched multi-row upserts -------------
+        // ------------- MySQL/TiDB: accumulate using target col + VALUES() -------------
         Db::Mysql(pool) => {
             use sqlx::{MySql, QueryBuilder};
 
@@ -340,13 +347,13 @@ pub async fn bulk_upsert_aggregates(
                         .push_bind(c.draws as i64);
                 });
 
-                // TiDB/MySQL upsert
+                // Accumulate into existing row
                 qb.push(
                     " ON DUPLICATE KEY UPDATE \
-                      games = VALUES(games), \
-                      white_wins = VALUES(white_wins), \
-                      black_wins = VALUES(black_wins), \
-                      draws = VALUES(draws)"
+                      games = games + VALUES(games), \
+                      white_wins = white_wins + VALUES(white_wins), \
+                      black_wins = black_wins + VALUES(black_wins), \
+                      draws = draws + VALUES(draws)"
                 );
 
                 qb.build().execute(&mut *tx).await?;
