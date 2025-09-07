@@ -6,19 +6,21 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.39", features = ["rt-multi-thread", "macros"] }
 sqlx  = { version = "0.7", features = [
-  "sqlite",                # SQLite driver
-  "postgres",              # Postgres driver
+  "sqlite",
+  "postgres",
   "mysql",
-  "runtime-tokio-rustls",  # TLS without OpenSSL
+  "runtime-tokio-rustls",
   "macros",
-  "migrate"                # (optional) but nice since you use migrations
+  "migrate"
 ] }
 dotenvy = "0.15"
 anyhow = "1"
 rayon = "1.11"
 zstd    = "0.13"
 regex   = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono  = { version = "0.4", default-features = false, features = ["clock"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-toml  = "0.8"
+serde   = { version = "1", features = ["derive"] }
+toml    = "0.8"
+sha2    = "0.10"
+hex     = "0.4"

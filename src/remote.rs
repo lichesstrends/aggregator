@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -9,37 +10,61 @@ use crate::aggregator::{aggregate_from_reader, write_csv, AggMap};
 use crate::config::Config;
 use crate::db;
 
-// ---- Types ----
+/* ---- Types ---- */
 
+#[derive(Clone, Debug)]
 pub struct PlanItem {
-    pub month: String, // "YYYY-MM"
+    /// e.g. "2013-01" parsed from the URL (for logging/filters only)
+    pub month: String,
+    /// full URL to the .pgn.zst
     pub url: String,
+    /// sha256 of the compressed file (from sha256sums.txt)
+    pub hash: Option<String>,
 }
 
-// ---- Helpers ----
+/* ---- Helpers ---- */
 
-fn parse_list_to_oldest(list_txt: &str) -> Vec<PlanItem> {
-    // Lines like: https://.../lichess_db_standard_rated_YYYY-MM.pgn.zst
-    let re = Regex::new(r"(\d{4}-\d{2})\.pgn\.zst$").unwrap();
-    let mut items: Vec<PlanItem> = list_txt
+fn parse_list_to_oldest(list_txt: &str) -> Vec<(String, String)> {
+    // Returns (url, filename). Lines look like:
+    // https://.../lichess_db_standard_rated_YYYY-MM.pgn.zst
+    let re = Regex::new(r"/([^/\s]+_([0-9]{4}-[0-9]{2})\.pgn\.zst)$").unwrap();
+    let mut items: Vec<(String, String)> = list_txt
         .lines()
         .filter_map(|line| {
             let line = line.trim();
             if line.is_empty() { return None; }
-            let month = re.captures(line)
-                .and_then(|c| c.get(1))
-                .map(|m| m.as_str().to_string())?;
-            Some(PlanItem { month, url: line.to_string() })
+            re.captures(line).map(|cap| {
+                let fname = cap.get(1).unwrap().as_str().to_string();
+                (line.to_string(), fname)
+            })
         })
         .collect();
 
-    // Newest-first on the site; we want oldest-first
-    items.sort_by(|a, b| a.month.cmp(&b.month));
+    // Oldest first by month parsed from filename
+    items.sort_by(|a, b| {
+        let ma = a.1.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+        let mb = b.1.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+        ma.cmp(&mb)
+    });
     items
 }
 
+fn parse_hashes(sums_txt: &str) -> HashMap<String, String> {
+    // Lines: "<sha256>  <filename>"
+    let re = Regex::new(r"^([a-f0-9]{64})\s+(\S+)$").unwrap();
+    let mut map = HashMap::new();
+    for line in sums_txt.lines() {
+        if let Some(c) = re.captures(line.trim()) {
+            let h = c.get(1).unwrap().as_str().to_string();
+            let f = c.get(2).unwrap().as_str().to_string();
+            map.insert(f, h);
+        }
+    }
+    map
+}
+
 fn norm_month(s: &str) -> Option<String> {
-    // Accept "YYYY-MM", "YYYY-M", "YYYY/MM", "YYYY.MM"
+    // Accept "YYYY-MM", "YYYY/M", "YYYY.M"
     let s = s.trim();
     let parts: Vec<&str> = s.split(|c| c == '-' || c == '/' || c == '.').collect();
     if parts.len() < 2 { return None; }
@@ -52,105 +77,129 @@ fn norm_month(s: &str) -> Option<String> {
     Some(format!("{}-{:02}", y, mi))
 }
 
-async fn fetch_list(list_url: &str) -> anyhow::Result<String> {
-    vprintln!("remote: GET {}", list_url);
+async fn fetch_text(url: &str) -> anyhow::Result<String> {
+    vprintln!("remote: GET {}", url);
     let t0 = Instant::now();
-    let list_url_owned = list_url.to_string();
+    let url_owned = url.to_string();
     let text = task::spawn_blocking(move || -> anyhow::Result<String> {
-        let resp = reqwest::blocking::get(&list_url_owned)?.error_for_status()?;
+        let resp = reqwest::blocking::get(&url_owned)?.error_for_status()?;
         Ok(resp.text()?)
     }).await??;
-    vprintln!(
-        "remote: list.txt fetched in {:.3}s ({} bytes)",
-        t0.elapsed().as_secs_f64(),
-        text.len()
-    );
+    vprintln!("remote: fetched {} bytes in {:.3}s", text.len(), t0.elapsed().as_secs_f64());
     Ok(text)
 }
 
-// ---- Plans ----
+/* ---- Plans ---- */
 
-/// Build ingest plan using DB (skips already-success months).
 pub async fn build_plan(
     dbh: &crate::db::Db,
-    list_url: &str,
+    remote_base_url: &str,
     since: Option<&str>,
     until: Option<&str>,
 ) -> anyhow::Result<Vec<PlanItem>> {
-    let text = fetch_list(list_url).await?;
-    let mut items = parse_list_to_oldest(&text);
-    vprintln!("remote: months available = {}", items.len());
+    let base = remote_base_url.trim_end_matches('/');
+    let list_url = format!("{}/list.txt", base);
+    let sums_url = format!("{}/sha256sums.txt", base);
 
+    let list_txt = fetch_text(&list_url).await?;
+    let sums_txt = fetch_text(&sums_url).await?;
+    let hashes = parse_hashes(&sums_txt);
+
+    let mut pairs = parse_list_to_oldest(&list_txt); // (url, filename)
+    vprintln!("remote: months available = {}", pairs.len());
+
+    // month filter (for UX only)
     let since_n = since.and_then(norm_month);
     let until_n = until.and_then(norm_month);
-
     if let Some(ref since_m) = since_n {
-        let before = items.len();
-        items.retain(|it| it.month.as_str() >= since_m.as_str());
-        vprintln!(
-            "remote: filtered by since={} -> {} items (was {})",
-            since_m, items.len(), before
-        );
+        let before = pairs.len();
+        pairs.retain(|(_, fname)| {
+            let m = fname.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+            m.as_str() >= since_m.as_str()
+        });
+        vprintln!("remote: filtered by since={} -> {} (was {})", since_m, pairs.len(), before);
     }
-
     if let Some(ref until_m) = until_n {
-        let before = items.len();
-        items.retain(|it| it.month.as_str() <= until_m.as_str());
-        vprintln!(
-            "remote: filtered by until={} -> {} items (was {})",
-            until_m, items.len(), before
-        );
+        let before = pairs.len();
+        pairs.retain(|(_, fname)| {
+            let m = fname.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+            m.as_str() <= until_m.as_str()
+        });
+        vprintln!("remote: filtered by until={} -> {} (was {})", until_m, pairs.len(), before);
     }
 
+    // join with hashes
+    let mut items: Vec<PlanItem> = pairs
+        .into_iter()
+        .map(|(url, fname)| {
+            let month = fname.split('_').last().unwrap().replace(".pgn.zst", "");
+            let hash = hashes.get(&fname).cloned();
+            PlanItem { month, url, hash }
+        })
+        .collect();
+
+    // skip already ingested by hash
     let t1 = Instant::now();
-    let done = db::already_ingested_months(dbh).await?;
+    let done = db::already_ingested_hashes(dbh).await?;
     let before = items.len();
-    items.retain(|it| !done.contains(&it.month));
+    items.retain(|it| it.hash.as_ref().map(|h| !done.contains(h)).unwrap_or(true));
     vprintln!(
-        "remote: filtered already-ingested -> {} items (was {}), query took {:.3}s",
+        "remote: filtered already-ingested (by hash) -> {} (was {}), query took {:.3}s",
         items.len(), before, t1.elapsed().as_secs_f64()
     );
 
     Ok(items)
 }
 
-/// Build plan without touching DB (dry-run path).
 pub async fn plan_no_db(
-    list_url: &str,
+    remote_base_url: &str,
     since: Option<&str>,
     until: Option<&str>,
 ) -> anyhow::Result<Vec<PlanItem>> {
-    let text = fetch_list(list_url).await?;
-    let mut items = parse_list_to_oldest(&text);
-    vprintln!("remote: months available = {}", items.len());
+    let base = remote_base_url.trim_end_matches('/');
+    let list_url = format!("{}/list.txt", base);
+    let sums_url = format!("{}/sha256sums.txt", base);
+
+    let list_txt = fetch_text(&list_url).await?;
+    let sums_txt = fetch_text(&sums_url).await?;
+    let hashes = parse_hashes(&sums_txt);
+
+    let mut pairs = parse_list_to_oldest(&list_txt);
+    vprintln!("remote: months available = {}", pairs.len());
 
     let since_n = since.and_then(norm_month);
     let until_n = until.and_then(norm_month);
-
     if let Some(ref since_m) = since_n {
-        let before = items.len();
-        items.retain(|it| it.month.as_str() >= since_m.as_str());
-        vprintln!(
-            "remote: filtered by since={} -> {} items (was {})",
-            since_m, items.len(), before
-        );
+        let before = pairs.len();
+        pairs.retain(|(_, fname)| {
+            let m = fname.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+            m.as_str() >= since_m.as_str()
+        });
+        vprintln!("remote: filtered by since={} -> {} (was {})", since_m, pairs.len(), before);
+    }
+    if let Some(ref until_m) = until_n {
+        let before = pairs.len();
+        pairs.retain(|(_, fname)| {
+            let m = fname.split('_').last().unwrap_or("").replace(".pgn.zst", "");
+            m.as_str() <= until_m.as_str()
+        });
+        vprintln!("remote: filtered by until={} -> {} (was {})", until_m, pairs.len(), before);
     }
 
-    if let Some(ref until_m) = until_n {
-        let before = items.len();
-        items.retain(|it| it.month.as_str() <= until_m.as_str());
-        vprintln!(
-            "remote: filtered by until={} -> {} items (was {})",
-            until_m, items.len(), before
-        );
-    }
+    let items = pairs
+        .into_iter()
+        .map(|(url, fname)| {
+            let month = fname.split('_').last().unwrap().replace(".pgn.zst", "");
+            let hash = hashes.get(&fname).cloned();
+            PlanItem { month, url, hash }
+        })
+        .collect();
+
     Ok(items)
 }
 
-// ---- Streaming + aggregation ----
+/* ---- Streaming + aggregation (remote) ---- */
 
-/// Stream one monthly .zst over HTTP, aggregate, optionally write CSV.
-/// Returns (aggregate map, total games, elapsed_ms).
 pub async fn stream_and_aggregate_async(
     url: &str,
     out_csv: Option<&Path>,
@@ -160,7 +209,7 @@ pub async fn stream_and_aggregate_async(
     let out_opt: Option<PathBuf> = out_csv.map(|p| p.to_path_buf());
     let cfg_cloned = cfg.clone();
 
-    let (map, games, elapsed_ms) = task::spawn_blocking(move || -> anyhow::Result<(AggMap, usize, u128)> {
+    let (map, games, elapsed_ms) = tokio::task::spawn_blocking(move || -> anyhow::Result<(AggMap, usize, u128)> {
         let start = Instant::now();
 
         vprintln!("remote: HTTP GET {}", url_owned);

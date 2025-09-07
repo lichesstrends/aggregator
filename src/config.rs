@@ -3,7 +3,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub bucket_size: u16,
-    pub list_url: String,
+    /// Remote base URL, e.g. "https://database.lichess.org/standard"
+    /// We derive {base}/list.txt and {base}/sha256sums.txt from this.
+    pub remote_base_url: String,
     pub batch_size: usize,
     pub db_batch_rows: usize,
     pub rayon_threads: Option<usize>,
@@ -13,7 +15,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bucket_size: 200,
-            list_url: "https://database.lichess.org/standard/list.txt".to_string(),
+            remote_base_url: "https://database.lichess.org/standard".to_string(),
             batch_size: 1000,
             db_batch_rows: 1000,
             rayon_threads: None,

@@ -1,6 +1,6 @@
-bucket_size = 200
-list_url    = "https://database.lichess.org/standard/list.txt"
-db_batch_rows = 1000
+bucket_size     = 200
+remote_base_url = "https://database.lichess.org/standard"
+db_batch_rows   = 1000
 
 # rayon setup
 batch_size  = 1000   # games per aggregation batch

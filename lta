@@ -10,7 +10,7 @@ SINCE=""
 UNTIL=""
 OUT_HOST="${OUT:-}"
 FILES=()
-LIST_URL=""
+REMOTE_URL=""
 VERBOSE=0
 SAVE=0
 
@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
     --since|--from) SINCE="${2:-}"; shift 2 ;;
     --until)  UNTIL="${2:-}"; shift 2 ;;
     --out|-o) OUT_HOST="${2:-}"; shift 2 ;;
-    --list-url) LIST_URL="${2:-}"; shift 2 ;;
+    --remote-url) REMOTE_URL="${2:-}"; shift 2 ;;
     --save) SAVE=1; shift ;;
     -v|--verbose) VERBOSE=1; shift ;;
     -h|--help)
@@ -61,7 +61,7 @@ if [[ $REMOTE -eq 1 ]]; then
   [[ -n "$SINCE" ]]         && APP_ARGS+=(--since "$SINCE")
   [[ -n "$UNTIL" ]]         && APP_ARGS+=(--until "$UNTIL")
   [[ -n "$OUT_CONTAINER" ]] && APP_ARGS+=(--out "$OUT_CONTAINER")
-  [[ -n "$LIST_URL" ]]      && APP_ARGS+=(--list-url "$LIST_URL")
+  [[ -n "$REMOTE_URL" ]]    && APP_ARGS+=(--remote-url "$REMOTE_URL")
   [[ $VERBOSE -eq 1 ]]      && APP_ARGS+=(-v)
   [[ $SAVE -eq 1 ]]         && APP_ARGS+=(--save)
 
@@ -87,11 +87,12 @@ for FILE in "${FILES[@]}"; do
     continue
   fi
 
-  # zstdcat file → aggregator [flags]
-  cmd="zstdcat $(printf '%q' "/app/$FILE") | '$BIN'"
+  # We pass the compressed file path directly; the binary handles hashing/decode.
+  cmd="'$BIN'"
   for a in "${BIN_FLAGS[@]}"; do
     cmd+=" $(printf '%q' "$a")"
   done
+  cmd+=" $(printf '%q' "/app/$FILE")"
 
   docker compose exec -T dev bash -lc "$cmd"
 done

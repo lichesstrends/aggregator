@@ -6,6 +6,8 @@ use sqlx::{PgPool, SqlitePool, MySqlPool};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::mysql::MySqlPoolOptions;
+use sqlx::sqlite::SqliteConnectOptions;
+use std::str::FromStr;
 
 use crate::aggregator::AggMap;
 
@@ -47,9 +49,11 @@ pub async fn connect_from_env() -> anyhow::Result<Db> {
     let t0 = Instant::now();
     let db = match backend {
         Backend::Sqlite => {
+            let options = SqliteConnectOptions::from_str(&url)?
+                .create_if_missing(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(max)
-                .connect(&url)
+                .connect_with(options)
                 .await
                 .with_context(|| "connecting to SQLite")?;
             Db::Sqlite(pool)
@@ -97,74 +101,67 @@ pub async fn run_migrations(db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn already_ingested_months(db: &Db) -> anyhow::Result<HashSet<String>> {
+/* ---------- Ingestions (hash-based) ---------- */
+
+pub async fn already_ingested_hashes(db: &Db) -> anyhow::Result<HashSet<String>> {
     let t0 = Instant::now();
-    let months: Vec<String> = match db {
+    let hashes: Vec<String> = match db {
         Db::Sqlite(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT month FROM ingestions WHERE status = 'success'"
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT hash FROM ingestions WHERE status = 'success'")
+                .fetch_all(pool).await?
         }
         Db::Postgres(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT month FROM ingestions WHERE status = 'success'"
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT hash FROM ingestions WHERE status = 'success'")
+                .fetch_all(pool).await?
         }
         Db::Mysql(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT month FROM ingestions WHERE status = 'success'"
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT hash FROM ingestions WHERE status = 'success'")
+                .fetch_all(pool).await?
         }
     };
-    vprintln!("db:loaded ingested months = {} in {:.3}s", months.len(), t0.elapsed().as_secs_f64());
-    Ok(months.into_iter().collect())
+    vprintln!("db:loaded ingested hashes = {} in {:.3}s", hashes.len(), t0.elapsed().as_secs_f64());
+    Ok(hashes.into_iter().collect())
 }
 
 pub async fn mark_ingestion_start(
-    db: &Db, month: &str, url: &str, started_iso: &str
+    db: &Db, hash: &str, url: &str, started_iso: &str
 ) -> anyhow::Result<()> {
-    vprintln!("db:mark start {} {}", month, url);
+    vprintln!("db:mark start hash={} {}", &hash[0..8], url);
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
-                "INSERT INTO ingestions (month, url, started_at, status)
+                "INSERT INTO ingestions (hash, url, started_at, status)
                  VALUES (?, ?, ?, 'started')
-                 ON CONFLICT(month) DO UPDATE SET
+                 ON CONFLICT(hash) DO UPDATE SET
                    url=excluded.url,
                    started_at=excluded.started_at,
                    status='started'"
             )
-            .bind(month).bind(url).bind(started_iso)
+            .bind(hash).bind(url).bind(started_iso)
             .execute(pool).await?;
         }
         Db::Postgres(pool) => {
             sqlx::query(
-                "INSERT INTO ingestions (month, url, started_at, status)
+                "INSERT INTO ingestions (hash, url, started_at, status)
                  VALUES ($1, $2, $3, 'started')
-                 ON CONFLICT (month) DO UPDATE SET
+                 ON CONFLICT (hash) DO UPDATE SET
                    url = EXCLUDED.url,
                    started_at = EXCLUDED.started_at,
                    status = 'started'"
             )
-            .bind(month).bind(url).bind(started_iso)
+            .bind(hash).bind(url).bind(started_iso)
             .execute(pool).await?;
         }
         Db::Mysql(pool) => {
             sqlx::query(
-                "INSERT INTO ingestions (month, url, started_at, status)
+                "INSERT INTO ingestions (hash, url, started_at, status)
                  VALUES (?, ?, ?, 'started')
                  ON DUPLICATE KEY UPDATE
                    url = VALUES(url),
                    started_at = VALUES(started_at),
                    status = 'started'"
             )
-            .bind(month).bind(url).bind(started_iso)
+            .bind(hash).bind(url).bind(started_iso)
             .execute(pool).await?;
         }
     }
@@ -172,40 +169,42 @@ pub async fn mark_ingestion_start(
 }
 
 pub async fn mark_ingestion_finish(
-    db: &Db, month: &str, games: i64, duration_ms: i64, status: &str, finished_iso: &str
+    db: &Db, hash: &str, games: i64, duration_ms: i64, status: &str, finished_iso: &str
 ) -> anyhow::Result<()> {
-    vprintln!("db:mark finish {} games={} dur_ms={} status={}", month, games, duration_ms, status);
+    vprintln!("db:mark finish hash={} games={} dur_ms={} status={}", &hash[0..8], games, duration_ms, status);
     match db {
         Db::Sqlite(pool) => {
             sqlx::query(
                 "UPDATE ingestions
                    SET games = ?, duration_ms = ?, status = ?, finished_at = ?
-                 WHERE month = ?"
+                 WHERE hash = ?"
             )
-            .bind(games).bind(duration_ms).bind(status).bind(finished_iso).bind(month)
+            .bind(games).bind(duration_ms).bind(status).bind(finished_iso).bind(hash)
             .execute(pool).await?;
         }
         Db::Postgres(pool) => {
             sqlx::query(
                 "UPDATE ingestions
                    SET games = $2, duration_ms = $3, status = $4, finished_at = $5
-                 WHERE month = $1"
+                 WHERE hash = $1"
             )
-            .bind(month).bind(games).bind(duration_ms).bind(status).bind(finished_iso)
+            .bind(hash).bind(games).bind(duration_ms).bind(status).bind(finished_iso)
             .execute(pool).await?;
         }
         Db::Mysql(pool) => {
             sqlx::query(
                 "UPDATE ingestions
                    SET games = ?, duration_ms = ?, status = ?, finished_at = ?
-                 WHERE month = ?"
+                 WHERE hash = ?"
             )
-            .bind(games).bind(duration_ms).bind(status).bind(finished_iso).bind(month)
+            .bind(games).bind(duration_ms).bind(status).bind(finished_iso).bind(hash)
             .execute(pool).await?;
         }
     }
     Ok(())
 }
+
+/* ---------- Aggregates bulk upsert ---------- */
 
 pub async fn bulk_upsert_aggregates(
     db: &Db,
@@ -224,18 +223,16 @@ pub async fn bulk_upsert_aggregates(
     });
 
     match db {
-        // ------------- SQLite: batched upsert with accumulation -------------
+        // SQLite
         Db::Sqlite(pool) => {
-            // 8 params per row; SQLite default param limit ~999 → 999/8 ~= 124
             let max_sqlite_rows = 120usize;
             let chunk = cfg_chunk_size.min(max_sqlite_rows).max(1);
-
             vprintln!("db:upsert (sqlite) rows={} chunk={}", rows.len(), chunk);
+
             let t0 = std::time::Instant::now();
             let mut tx = pool.begin().await?;
 
             for chunk_rows in rows.chunks(chunk) {
-                // INSERT ... ON CONFLICT (...) DO UPDATE SET col = col + excluded.col
                 let mut sql = String::from(
                     "INSERT INTO aggregates \
                      (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) \
@@ -267,31 +264,25 @@ pub async fn bulk_upsert_aggregates(
                 }
                 q.execute(&mut *tx).await?;
             }
-
             tx.commit().await?;
             vprintln!("db:upsert (sqlite) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // ------------- Postgres: accumulate using EXCLUDED + target table -------------
+        // Postgres
         Db::Postgres(pool) => {
             use sqlx::{Postgres, QueryBuilder};
-
             let chunk = cfg_chunk_size.max(1);
             vprintln!("db:upsert (postgres) rows={} chunk={}", rows.len(), chunk);
             let t0 = std::time::Instant::now();
 
             let mut tx = pool.begin().await?;
-            // safe for idempotent “additive” upserts
             sqlx::query("SET LOCAL synchronous_commit = off").execute(&mut *tx).await?;
 
             for chunk_rows in rows.chunks(chunk) {
-                vprintln!("db:upsert (postgres) batching {} rows", chunk_rows.len());
-
                 let mut qb = QueryBuilder::<Postgres>::new(
                     "INSERT INTO aggregates \
                      (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
                 );
-
                 qb.push_values(chunk_rows, |mut b, (k, c)| {
                     b.push_bind(&k.month)
                         .push_bind(&k.eco_group)
@@ -302,7 +293,6 @@ pub async fn bulk_upsert_aggregates(
                         .push_bind(c.black_wins as i64)
                         .push_bind(c.draws as i64);
                 });
-
                 qb.push(
                     " ON CONFLICT (month, eco_group, white_bucket, black_bucket) DO UPDATE SET \
                       games = aggregates.games + EXCLUDED.games, \
@@ -310,32 +300,25 @@ pub async fn bulk_upsert_aggregates(
                       black_wins = aggregates.black_wins + EXCLUDED.black_wins, \
                       draws = aggregates.draws + EXCLUDED.draws"
                 );
-
                 qb.build().execute(&mut *tx).await?;
             }
-
             tx.commit().await?;
             vprintln!("db:upsert (postgres) done in {:.3}s", t0.elapsed().as_secs_f64());
         }
 
-        // ------------- MySQL/TiDB: accumulate using target col + VALUES() -------------
+        // MySQL/TiDB
         Db::Mysql(pool) => {
             use sqlx::{MySql, QueryBuilder};
-
             let chunk = cfg_chunk_size.max(1);
             vprintln!("db:upsert (mysql) rows={} chunk={}", rows.len(), chunk);
             let t0 = std::time::Instant::now();
 
             let mut tx = pool.begin().await?;
-
             for chunk_rows in rows.chunks(chunk) {
-                vprintln!("db:upsert (mysql) batching {} rows", chunk_rows.len());
-
                 let mut qb = QueryBuilder::<MySql>::new(
                     "INSERT INTO aggregates \
                      (month, eco_group, white_bucket, black_bucket, games, white_wins, black_wins, draws) "
                 );
-
                 qb.push_values(chunk_rows, |mut b, (k, c)| {
                     b.push_bind(&k.month)
                         .push_bind(&k.eco_group)
@@ -346,8 +329,6 @@ pub async fn bulk_upsert_aggregates(
                         .push_bind(c.black_wins as i64)
                         .push_bind(c.draws as i64);
                 });
-
-                // Accumulate into existing row
                 qb.push(
                     " ON DUPLICATE KEY UPDATE \
                       games = games + VALUES(games), \
@@ -355,10 +336,8 @@ pub async fn bulk_upsert_aggregates(
                       black_wins = black_wins + VALUES(black_wins), \
                       draws = draws + VALUES(draws)"
                 );
-
                 qb.build().execute(&mut *tx).await?;
             }
-
             tx.commit().await?;
             vprintln!("db:upsert (mysql) done in {:.3}s", t0.elapsed().as_secs_f64());
         }

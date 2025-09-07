@@ -1,7 +1,7 @@
--- Track which months were successfully ingested (and basic stats).
+-- Track which files (remote or local) were successfully ingested with their hash and basic info..
 CREATE TABLE IF NOT EXISTS ingestions (
-  month       VARCHAR(7)   PRIMARY KEY, -- "YYYY-MM"
-  url         TEXT         NOT NULL,
+  hash        VARCHAR(64)  PRIMARY KEY, -- sha256 hex of the compressed file
+  url         TEXT         NOT NULL,    -- remote URL or local file path
   started_at  TEXT,
   finished_at TEXT,
   games       BIGINT       DEFAULT 0,
