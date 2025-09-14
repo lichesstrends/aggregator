@@ -1,6 +1,6 @@
 ![LichessTrends logo](docs/lichesstrends.svg "LichessTrends logo")
 
-The **LichessTrends Aggregator** is a fast, streaming **Rust** tool that turns the massive monthly **Lichess** PGN dumps (available at database.lichess.org) into compact, queryable statistics. It:
+The **LichessTrends Aggregator** is a fast, streaming **Rust** tool that turns the massive monthly **Lichess** PGN dumps (available at [database.lichess.org](database.lichess.org)) into compact, queryable statistics. It:
 
 - **fetches** remote monthly PGN dumps from **Lichess** (or reads your local `.pgn.zst` files);
 - **streams** and decodes them on the fly (no giant temp files);
