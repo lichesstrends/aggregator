@@ -11,52 +11,60 @@ The **LichessTrends Aggregator** is a fast, streaming **Rust** tool that turns t
   - **Black Elo bucket** (default size `200`);
   - for each of these aggregates, the following counts are stored : `games`, `white_wins`, `black_wins` and `draws`.
 
-Why this is nice 🙌:
-- 📊 The generated aggregates let you compute many kinds of high-level stats : opening popularity, win/draw rates, performance by Elo buckets, and trends over time.
-- ⚡ It’s blazing fast and designed for scale, with huge dump files streaming on the fly, parallel parsing and aggregates computation in batches.
-- 💾 You can save your results as CSVs or to your remote database. By default, it's a dry-run that doesn't save anything unless you say so.
+It's nice because :
+- The generated aggregates let you compute many kinds of high-level stats : opening popularity, win/draw rates, performance by Elo buckets, and trends over time.
+- It’s blazing fast and designed for scale, with huge dump files streaming on the fly, parallel parsing and aggregates computation in batches.
+- You can save your results as CSVs or to your remote database. By default, it's a dry-run that doesn't save anything unless you say so.
 
-## 🐳Prerequisites
-- **Docker**
-- **Docker Compose**
+## Prerequisites
+- **Docker** (for building)
 
-That’s it! 😊
-
-## 🚀Getting started
-A sample dump is included in the repo at `sample/lichess_sample.pgn.zst`. The wrapper script **`lta`** builds and runs everything inside Docker for you.
+## Building
 
 ```bash
-# Show help and build on first run
-./lta -h
+./build.sh
+```
+
+This produces a statically-linked Linux binary at `./target/lta` that runs on any Linux system (including WSL).
+
+## Getting started
+A sample dump is included in the repo at `sample/lichess_sample.pgn.zst`.
+
+```bash
+# Build first
+./build.sh
+
+# Show help
+./target/lta -h
 
 # Run the sample (dry-run: no database/disk writes)
-./lta sample/lichess_sample.pgn.zst
+./target/lta sample/lichess_sample.pgn.zst
 ```
 
 ### Other usage examples
 **Remote stream from Lichess:**
 ```bash
 # Oldest → newest, stop at (and include) 2013-02
-./lta --remote --until 2013-02 -v
+./target/lta --remote --until 2013-02 -v
 
 # Range selection (inclusive on both ends): from 2015-01 to 2015-03
-./lta --remote --since 2015-01 --until 2015-03 -v
+./target/lta --remote --since 2015-01 --until 2015-03 -v
 ```
 
 **Remote stream from Lichess and save to local SQLite (creates ./data/lichess.db)**
 ```bash
 cp .env.example .env       # defaults to local SQLite
-./lta --save --remote --until 2013-02 -v
+./target/lta --save --remote --until 2013-02 -v
 ```
 
 **Write aggregated CSVs:**
 ```bash
 # One CSV per dump will be written into ./out/
-./lta --remote --until 2013-02 --out out/ -v
+./target/lta --remote --until 2013-02 --out out/ -v
 ```
 
-> 💡 In **local mode**, `--out` may be a **file** (single CSV) or a **directory** (one CSV per input).  
-> 💡 In **remote mode**, `--out` is usually a **directory** (one CSV per dump).
+> In **local mode**, `--out` may be a **file** (single CSV) or a **directory** (one CSV per input).  
+> In **remote mode**, `--out` is usually a **directory** (one CSV per dump).
 
 The produced CSV will have the following columns:
 ```
@@ -68,7 +76,7 @@ Here is an example row:
 2013-05,C00-C19,1600,1400,523,280,180,63
 ```
 
-> 💡 This means: In **May 2013** on Lichess, for games in the **C00-C19 ECO group** (French Defence family) where **White was rated in the 1600–1799 bucket** and **Black in the 1400–1599 bucket**, there were a total of **523 games**. Out of these, **White won 280**, **Black won 180**, and **63 were draws**.
+> This means: In **May 2013** on Lichess, for games in the **C00-C19 ECO group** (French Defence family) where **White was rated in the 1600–1799 bucket** and **Black in the 1400–1599 bucket**, there were a total of **523 games**. Out of these, **White won 280**, **Black won 180**, and **63 were draws**.
 
 
 ## ⚙️How it works
@@ -124,40 +132,40 @@ You can reset your local SQLite to start fresh:
 rm -f data/lichess.db data/lichess.db-wal data/lichess.db-shm
 ```
 
-## 🗂️Local mode (details)
+## Local mode (details)
 Use a local `.pgn.zst` file you already have (no extraction needed).
 
 ```bash
 # Count games (dry-run)
-./lta path/to/lichess_db_standard_rated_2013-07.pgn.zst
+./target/lta path/to/lichess_db_standard_rated_2013-07.pgn.zst
 
 # Count and write a single CSV
-./lta --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
+./target/lta --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
 
 # Persist counts to local SQLite
 cp .env.example .env
-./lta --save --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
+./target/lta --save --out out/2013-07.csv path/to/lichess_db_standard_rated_2013-07.pgn.zst
 ```
 
 What you’ll see in the terminal:
 - per-file timing + number of games processed;
 - optional “wrote CSV” message if `--out` is set.
 
-## 🌐Remote mode (Lichess)
+## Remote mode (Lichess)
 The app reads `list.txt` and `sha256sums.txt` [from Lichess](https://database.lichess.org/standard/list.txt) (a list of monthly URLs along with their SHA-256 hashes), sorts **oldest → newest**, and processes dump after dump.
 
 ```bash
 # Dry-run up to a given monthly dump
-./lta --remote --until 2013-05 -v
+./target/lta --remote --until 2013-05 -v
 
 # Dry-run with CSVs (one file per monthly dump)
-./lta --remote --until 2013-05 --out out/ -v
+./target/lta --remote --until 2013-05 --out out/ -v
 
 # Persist results into your configured database (requires .env with DATABASE_URL)
-./lta --remote --until 2013-05 --save -v
+./target/lta --remote --until 2013-05 --save -v
 
 # Use a custom index (if you mirror Lichess)
-./lta --remote --remote-url https://my.mirror/standard --since 2015-01 --until 2015-03
+./target/lta --remote --remote-url https://my.mirror/standard --since 2015-01 --until 2015-03
 ```
 
 What you’ll see:
@@ -165,7 +173,7 @@ What you’ll see:
 - optional CSV write messages if `--out` is set.
 - with `--save`, results are written to the DB and each processed dump is kept track of in the ingestions table.
 
-## 🗄️Remote database setup
+## Remote database setup
 You can push results into a remote database (**Postgres** and **MySQL** are supported). Create a `.env` file, then run with `--save`.
 
 1) Create `.env` (mock URL example shown):
@@ -177,10 +185,10 @@ DB_MAX_CONNECTIONS=10
 
 2) Save results to your remote database with the `--save` CLI option :
 ```bash
-./lta --save --remote --until 2013-05 -v
+./target/lta --save --remote --until 2013-05 -v
 ```
 
-## 🛠️Configuration file (`config.toml`)
+## Configuration file (`config.toml`)
 All knobs live in `config.toml`:
 
 ```toml
@@ -197,7 +205,7 @@ batch_size      = 1000
 - **batch_size**: number of games processed at a time before merging.
 - **rayon_threads**: set to force a specific parallelism; otherwise uses CPU count.
 
-## 💻CLI reference
+## CLI reference
 ```
 # Default is DRY-RUN: no DB connection and no writes.
 
@@ -224,8 +232,16 @@ batch_size      = 1000
 -h, --help                      Show built-in help
 ```
 
-## 📜License
+## GitHub Actions
+
+The aggregator runs automatically on the 4th of each month via GitHub Actions, downloading the latest release binary and ingesting new Lichess data.
+
+Setup:
+1. Go to repository Settings > Secrets and variables > Actions
+2. Add `DATABASE_URL` secret with your database connection string
+
+## License
 This project is licensed under the terms of the MIT license. Fork it, steal it, make it better (or worse), make it yours!
 
-## 🤝Contribution
-We welcome contributions! 💡 Issues, PRs, and ideas are all appreciated.
+## Contribution
+We welcome contributions! Issues, PRs, and ideas are all appreciated.

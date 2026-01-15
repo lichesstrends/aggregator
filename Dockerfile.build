@@ -1,0 +1,28 @@
+# Build-only Dockerfile for LichessTrends Aggregator
+# Produces a statically-linked Linux executable
+
+FROM rust:1.89-slim AS builder
+
+# Install build dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       pkg-config \
+       libssl-dev \
+       libsqlite3-dev \
+       musl-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add musl target for static linking
+RUN rustup target add x86_64-unknown-linux-musl
+
+WORKDIR /build
+
+# Copy only what's needed for the build
+COPY Cargo.toml Cargo.lock* ./
+COPY src/ ./src/
+COPY migrations/ ./migrations/
+
+# Build release binary with musl for static linking
+RUN cargo build --release --target x86_64-unknown-linux-musl
+
+# The final binary is at /build/target/x86_64-unknown-linux-musl/release/lta
