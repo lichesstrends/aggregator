@@ -1,0 +1,51 @@
+# Build and Release
+#
+# Creates a GitHub Release with the compiled binary when a version tag is pushed.
+# Usage: git tag v0.2.0 && git push origin v0.2.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Release Binary
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build binary
+        run: |
+          chmod +x build.sh
+          ./build.sh
+      
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: LichessTrends Aggregator ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            target/lta
+          body: |
+            ## LichessTrends Aggregator ${{ steps.version.outputs.VERSION }}
+            
+            Linux x86_64 binary (statically linked, runs on any Linux including WSL).
+            
+            ### Usage
+            ```bash
+            chmod +x lta
+            ./lta --help
+            ```

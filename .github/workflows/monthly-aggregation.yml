@@ -1,0 +1,98 @@
+# Monthly Lichess Data Aggregation
+#
+# Downloads the latest release binary and runs it to ingest new Lichess data.
+# Runs on the 4th of every month (allowing time for Lichess to publish dumps).
+
+name: Monthly Aggregation
+
+on:
+  schedule:
+    - cron: '0 6 4 * *'
+  
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Start from month (YYYY-MM)'
+        required: false
+        type: string
+      until:
+        description: 'Stop at month (YYYY-MM)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (no database writes)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  aggregate:
+    name: Run Aggregation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download latest release
+        run: |
+          # Get the latest release download URL
+          RELEASE_URL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest \
+            | grep "browser_download_url.*lta" \
+            | cut -d '"' -f 4)
+          
+          if [[ -z "$RELEASE_URL" ]]; then
+            echo "Error: Could not find release binary"
+            exit 1
+          fi
+          
+          echo "Downloading from: $RELEASE_URL"
+          curl -L -o lta "$RELEASE_URL"
+          chmod +x lta
+          ./lta --help
+      
+      - name: Checkout config
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            config.toml
+          sparse-checkout-cone-mode: false
+      
+      - name: Run aggregation
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DB_MAX_CONNECTIONS: ${{ vars.DB_MAX_CONNECTIONS || '5' }}
+        run: |
+          # Build arguments
+          ARGS="--remote -v"
+          
+          if [[ -n "${{ inputs.since }}" ]]; then
+            ARGS="$ARGS --since ${{ inputs.since }}"
+          fi
+          
+          if [[ -n "${{ inputs.until }}" ]]; then
+            ARGS="$ARGS --until ${{ inputs.until }}"
+          fi
+          
+          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            ARGS="$ARGS --save"
+          else
+            echo "DRY RUN - no database writes"
+          fi
+          
+          echo "Running: ./lta $ARGS"
+          ./lta $ARGS
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Aggregation Run" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          if [[ -n "${{ inputs.since }}" ]]; then
+            echo "- **Since**: ${{ inputs.since }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ -n "${{ inputs.until }}" ]]; then
+            echo "- **Until**: ${{ inputs.until }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "- **Mode**: Dry run" >> $GITHUB_STEP_SUMMARY
+          fi
