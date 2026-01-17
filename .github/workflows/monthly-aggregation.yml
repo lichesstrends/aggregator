@@ -1,13 +1,13 @@
 # Monthly Lichess Data Aggregation
 #
 # Downloads the latest release binary and runs it to ingest new Lichess data.
-# Runs on the 4th of every month (allowing time for Lichess to publish dumps).
+# Runs every day (allowing time for Lichess to publish dumps).
 
 name: Monthly Aggregation
 
 on:
   schedule:
-    - cron: '0 6 4 * *'
+    - cron: '0 0 * * *'
   
   workflow_dispatch:
     inputs:

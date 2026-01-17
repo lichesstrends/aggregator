@@ -234,7 +234,7 @@ batch_size      = 1000
 
 ## GitHub Actions
 
-The aggregator runs automatically on the 4th of each month via GitHub Actions, downloading the latest release binary and ingesting new Lichess data.
+The aggregator runs automatically every day at midnight via GitHub Actions, downloading the latest release binary and ingesting new Lichess data.
 
 Setup:
 1. Go to repository Settings > Secrets and variables > Actions

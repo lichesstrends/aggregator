@@ -53,14 +53,14 @@ pub fn parse() -> Cli {
 
 pub fn print_help() {
     eprintln!(
-r#"LichessTrends Aggregator
+r#"LichessTrends Aggregator (lta)
 
 Usage:
   Local compressed file(s) (.zst):
-    aggregator [--out OUT.csv|OUTDIR/] file1.zst [file2.zst ...] [--save] [-v]
+    lta [--out OUT.csv|OUTDIR/] file1.zst [file2.zst ...] [--save] [-v]
 
   Remote ingest (stream from Lichess without saving the .zst):
-    aggregator --remote [--since YYYY-MM] [--until YYYY-MM] [--out OUTDIR/] [--remote-url URL] [--save] [-v]
+    lta --remote [--since YYYY-MM] [--until YYYY-MM] [--out OUTDIR/] [--remote-url URL] [--save] [-v]
 
 Options:
   --remote, --ingest-remote     Stream monthly dumps (oldest → newest).
