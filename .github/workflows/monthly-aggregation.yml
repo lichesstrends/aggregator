@@ -48,13 +48,6 @@ jobs:
           chmod +x lta
           ./lta --help
       
-      - name: Checkout config
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            config.toml
-          sparse-checkout-cone-mode: false
-      
       - name: Run aggregation
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
